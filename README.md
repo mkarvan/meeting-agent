@@ -50,8 +50,9 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 ## Installation
 
 ```bash
-# 1. Clone or enter the project directory
-cd /home/herm/meeting-agent
+# 1. Clone and enter the project
+git clone https://github.com/mkarvan/meeting-agent.git
+cd meeting-agent
 
 # 2. Install dependencies with uv (recommended)
 uv sync

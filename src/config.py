@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     """Agent settings loaded from env vars."""
 
     # Paths
-    project_root: Path = Path("/home/herm/meeting-agent")
-    notes_dir: Path = Path("/home/herm/meeting-agent/notes")
+    project_root: Path = Path(__file__).resolve().parent.parent  # repo root
+    notes_dir: Path = Path("notes")   # resolved relative to project_root below
     audio_dir: Path = Path("/tmp/meeting-agent-audio")
 
     # Audio
@@ -103,6 +103,12 @@ class Settings(BaseSettings):
             "base_url": "https://opencode.ai/zen/go/v1",
             "model": self.llm_model or "deepseek-v4-pro",
         }
+
+    def model_post_init(self, __context) -> None:
+        """Resolve relative paths against project_root."""
+        if not self.notes_dir.is_absolute():
+            # Use object.__setattr__ to bypass pydantic validation
+            object.__setattr__(self, 'notes_dir', (self.project_root / self.notes_dir).resolve())
 
     class Config:
         env_prefix = "MEETING_AGENT_"

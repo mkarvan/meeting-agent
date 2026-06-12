@@ -58,8 +58,11 @@ class TestSettingsDefaults:
 
     def test_path_defaults(self):
         s = Settings()
-        assert s.project_root == Path("/home/herm/meeting-agent")
-        assert s.notes_dir == Path("/home/herm/meeting-agent/notes")
+        # project_root is auto-detected from __file__
+        assert s.project_root.name == "meeting-agent"
+        # notes_dir is resolved to project_root/notes by model_post_init
+        assert s.notes_dir.name == "notes"
+        assert s.notes_dir.parent == s.project_root
         assert s.audio_dir == Path("/tmp/meeting-agent-audio")
 
     def test_audio_defaults(self):

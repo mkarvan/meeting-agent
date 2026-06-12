@@ -1,0 +1,77 @@
+"""Audio capture using FFmpeg and PulseAudio virtual sink."""
+import subprocess
+import time
+from pathlib import Path
+from typing import Iterator
+
+from src.config import settings
+
+
+class AudioCapture:
+    """Captures system audio via PulseAudio virtual sink."""
+
+    def __init__(self):
+        self.chunk_dir = settings.audio_dir
+        self.chunk_dir.mkdir(parents=True, exist_ok=True)
+        self._process = None
+        self._current_chunk = 0
+        self.stopped = False
+
+    @property
+    def monitor_source(self) -> str:
+        return settings.audio_device
+
+    def start(self) -> None:
+        """Start FFmpeg process capturing audio in 30s chunks."""
+        self.stopped = False
+        output_pattern = str(self.chunk_dir / "chunk_%05d.wav")
+        cmd = [
+            "ffmpeg",
+            "-f", "pulse",
+            "-i", self.monitor_source,
+            "-af", "volume=15dB",   # boost quiet meeting audio
+            "-ac", "1",           # mono
+            "-ar", str(settings.sample_rate),  # 16kHz for whisper
+            "-f", "segment",
+            "-segment_time", str(settings.chunk_duration),
+            "-reset_timestamps", "1",
+            output_pattern,
+        ]
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def get_new_chunks(self) -> Iterator[Path]:
+        """Yield newly created WAV chunk files. Check `self.stopped` to exit."""
+        while not self.stopped:
+            chunk_path = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
+            if chunk_path.exists():
+                self._current_chunk += 1
+                yield chunk_path
+            else:
+                time.sleep(0.5)
+
+    def cleanup_chunk(self, chunk_path: Path) -> None:
+        """Delete a WAV chunk after successful transcription."""
+        if not settings.keep_audio and chunk_path.exists():
+            chunk_path.unlink()
+
+    def cleanup_all(self) -> None:
+        """Remove all remaining audio chunks (called on agent exit)."""
+        if not settings.keep_audio and self.chunk_dir.exists():
+            import shutil
+            shutil.rmtree(self.chunk_dir, ignore_errors=True)
+
+    def stop(self) -> None:
+        """Stop the FFmpeg capture process."""
+        self.stopped = True
+        if self._process:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait()
+            self._process = None

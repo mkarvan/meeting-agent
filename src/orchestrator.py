@@ -11,7 +11,7 @@ from src.config import settings, RunMode
 from src.audio.capture import AudioCapture
 from src.audio.transcriber import Transcriber
 from src.notes.summarizer import Summarizer
-from src.notes.formatter import save_notes, _sanitize_filename
+from src.notes.formatter import save_notes, sanitize_filename
 from src.meeting.connector import MeetingConnector
 from src.meeting.parser import parse_meeting_url
 
@@ -146,7 +146,7 @@ class MeetingAgent:
 
         # Save transcript
         ts = datetime.now().strftime("%Y-%m-%d_%H%M")
-        title = _sanitize_filename(meeting_title) if meeting_title else "meeting"
+        title = sanitize_filename(meeting_title) if meeting_title else "meeting"
         transcript_path = settings.notes_dir / f"{title}_{ts}_transcript.md"
 
         transcript_md = f"# {meeting_title}\n\n"

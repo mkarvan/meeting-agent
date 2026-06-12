@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_base_url: str = "https://api.openai.com/v1"
     anthropic_api_key: Optional[str] = None
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
     opencode_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434/v1"
     custom_api_key: Optional[str] = None
@@ -116,14 +117,11 @@ class Settings(BaseSettings):
             }
         elif self.llm_provider == LLMProvider.ANTHROPIC:
             # Anthropic's native API is not OpenAI-compatible.
-            # To use Anthropic, point an OpenAI-compatible proxy (e.g. LiteLLM,
-            # openai-router) at https://api.anthropic.com and set --provider custom
-            # with the proxy's base URL, OR set OPENAI_API_KEY to an Anthropic
-            # key and use a proxy that handles the conversion.
-            base = self.custom_base_url or "https://api.anthropic.com/v1"
+            # To use Anthropic, point an OpenAI-compatible proxy (e.g. LiteLLM)
+            # at your proxy URL and set anthropic_base_url accordingly.
             return {
                 "api_key": self.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", ""),
-                "base_url": base,
+                "base_url": self.anthropic_base_url,
                 "model": self.llm_model or "claude-sonnet-4-20250514",
             }
         elif self.llm_provider == LLMProvider.OPENCODE_GO:
@@ -168,9 +166,8 @@ def _build_settings() -> Settings:
         return Settings()
     except Exception as e:
         import sys
-        # Preserve Pydantic ValidationError details which list exact field names
-        err_class = e.__class__.__name__
-        if err_class == "ValidationError":
+        from pydantic import ValidationError
+        if isinstance(e, ValidationError):
             print(f"Warning: invalid configuration — {e}", file=sys.stderr)
         else:
             print(f"Warning: invalid configuration: {e}", file=sys.stderr)

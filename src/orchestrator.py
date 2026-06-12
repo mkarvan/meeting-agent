@@ -46,7 +46,7 @@ class MeetingAgent:
         logger.info("Mode: %s | LLM: %s/%s", settings.mode.value, settings.llm_provider.value, settings.llm_model)
 
         # 1. Start audio capture
-        self.audio.start()
+        await self.audio.start()
 
         # 2. Join meeting via browser
         self._browser_mode = True
@@ -88,7 +88,7 @@ class MeetingAgent:
 
         self._start_time = time.time()
         self._running = True
-        self.audio.start()
+        await self.audio.start()
 
         try:
             await self._capture_loop()
@@ -172,7 +172,7 @@ class MeetingAgent:
         # Generate LLM summary if in full mode
         if self.summarizer and settings.mode != RunMode.TRANSCRIPT_ONLY and self._transcript_lines:
             try:
-                summary = self.summarizer.generate_summary()
+                summary = await self.summarizer.generate_summary()
                 summary.duration_minutes = duration
                 summary.date = datetime.now().strftime("%Y-%m-%d")
                 summary_path = save_notes(summary)

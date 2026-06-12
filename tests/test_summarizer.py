@@ -144,9 +144,10 @@ class TestBuildRawTranscript:
 class TestTranscriptOnlyMode:
     """When settings.mode == RunMode.TRANSCRIPT_ONLY, no LLM call is made."""
 
+    @pytest.mark.asyncio
     @patch("src.notes.summarizer.settings")
     @patch("src.notes.summarizer.OpenAI")
-    def test_no_llm_call_in_transcript_only_mode(self, mock_openai_cls, mock_settings):
+    async def test_no_llm_call_in_transcript_only_mode(self, mock_openai_cls, mock_settings):
         mock_settings.mode = RunMode.TRANSCRIPT_ONLY
         mock_settings.get_llm_config.return_value = {
             "api_key": "sk-test", "base_url": "http://localhost/v1", "model": "test-model",
@@ -154,7 +155,7 @@ class TestTranscriptOnlyMode:
         s = Summarizer()
         s.add_segments([make_segment(0.0, 3.0, "Hello world")])
 
-        summary = s.generate_summary()
+        summary = await s.generate_summary()
 
         # The OpenAI client should NOT have been used
         client_instance = mock_openai_cls.return_value
@@ -185,7 +186,8 @@ class TestGenerateSummaryWithMockedLLM:
         settings_patch = patch("src.notes.summarizer.settings", mode=mode)
         return openai_patch, settings_patch
 
-    def test_valid_json_parsed_correctly(self):
+    @pytest.mark.asyncio
+    async def test_valid_json_parsed_correctly(self):
         openai_patch, settings_patch = self._patch_summarizer()
         with openai_patch as mock_openai_cls, settings_patch as mock_settings:
             mock_settings.get_llm_config.return_value = {
@@ -208,7 +210,7 @@ class TestGenerateSummaryWithMockedLLM:
 
             s = Summarizer()
             s.add_segments([make_segment(0.0, 5.0, "Let's talk budget.")])
-            result = s.generate_summary()
+            result = await s.generate_summary()
 
             # Metadata
             assert result.title == "Q2 Budget Review"
@@ -228,7 +230,8 @@ class TestGenerateSummaryWithMockedLLM:
             assert call_kwargs["timeout"] == 120
             assert "budget" in call_kwargs["messages"][0]["content"].lower()
 
-    def test_invalid_json_fallback(self):
+    @pytest.mark.asyncio
+    async def test_invalid_json_fallback(self):
         """When LLM returns non-JSON, fall back to Untitled Meeting with raw content as summary."""
         openai_patch, settings_patch = self._patch_summarizer()
         with openai_patch as mock_openai_cls, settings_patch as mock_settings:
@@ -244,7 +247,7 @@ class TestGenerateSummaryWithMockedLLM:
 
             s = Summarizer()
             s.add_segments([make_segment(0.0, 2.0, "Test")])
-            result = s.generate_summary()
+            result = await s.generate_summary()
 
             assert result.title == "Untitled Meeting"
             assert result.key_topics == []
@@ -253,7 +256,8 @@ class TestGenerateSummaryWithMockedLLM:
             assert result.summary == "Oops, not JSON — just some raw text."
             assert result.full_transcript == "[00:00] Test"
 
-    def test_empty_string_response(self):
+    @pytest.mark.asyncio
+    async def test_empty_string_response(self):
         """LLM returns empty string — fallback with empty summary, no crash."""
         openai_patch, settings_patch = self._patch_summarizer()
         with openai_patch as mock_openai_cls, settings_patch as mock_settings:
@@ -267,13 +271,14 @@ class TestGenerateSummaryWithMockedLLM:
 
             s = Summarizer()
             s.add_segments([make_segment(0.0, 1.0, "Hi")])
-            result = s.generate_summary()
+            result = await s.generate_summary()
 
             assert result.title == "Untitled Meeting"
             assert result.summary == "Failed to parse summary"
             assert result.key_topics == []
 
-    def test_none_content_response(self):
+    @pytest.mark.asyncio
+    async def test_none_content_response(self):
         """LLM response content is None — fallback without crash."""
         openai_patch, settings_patch = self._patch_summarizer()
         with openai_patch as mock_openai_cls, settings_patch as mock_settings:
@@ -287,14 +292,15 @@ class TestGenerateSummaryWithMockedLLM:
 
             s = Summarizer()
             s.add_segments([make_segment(0.0, 1.0, "Hi")])
-            result = s.generate_summary()
+            result = await s.generate_summary()
 
             # content = None, so content or "" → "" → json.loads("") fails → fallback
             # data["summary"] = content or "Failed to parse summary" → "" or ... → "Failed to parse summary"
             assert result.summary == "Failed to parse summary"
             assert result.title == "Untitled Meeting"
 
-    def test_json_missing_fields_defaulted(self):
+    @pytest.mark.asyncio
+    async def test_json_missing_fields_defaulted(self):
         """LLM returns valid JSON but missing some expected keys — defaults kick in."""
         openai_patch, settings_patch = self._patch_summarizer()
         with openai_patch as mock_openai_cls, settings_patch as mock_settings:
@@ -311,7 +317,7 @@ class TestGenerateSummaryWithMockedLLM:
 
             s = Summarizer()
             s.add_segments([make_segment(0.0, 1.0, "Hello")])
-            result = s.generate_summary()
+            result = await s.generate_summary()
 
             assert result.title == "Minimal"
             assert result.key_topics == []
@@ -327,7 +333,8 @@ class TestGenerateSummaryWithMockedLLM:
 class TestSummaryOnlyMode:
     """When settings.mode == RunMode.SUMMARY_ONLY, transcript is excluded."""
 
-    def test_summary_only_omits_transcript(self):
+    @pytest.mark.asyncio
+    async def test_summary_only_omits_transcript(self):
         openai_patch = patch("src.notes.summarizer.OpenAI")
         settings_patch = patch("src.notes.summarizer.settings", mode=RunMode.SUMMARY_ONLY)
 
@@ -348,7 +355,7 @@ class TestSummaryOnlyMode:
 
             s = Summarizer()
             s.add_segments([make_segment(0.0, 5.0, "Top secret content")])
-            result = s.generate_summary()
+            result = await s.generate_summary()
 
             assert result.title == "Secret Meeting"
             assert result.full_transcript == ""   # <-- omitted in SUMMARY_ONLY

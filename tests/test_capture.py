@@ -1,6 +1,7 @@
 """Tests for the audio capture module with mocked subprocess."""
+import asyncio
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock, AsyncMock, call
 
 import pytest
 from src.audio.capture import AudioCapture
@@ -12,17 +13,17 @@ class TestAudioCapture:
     @pytest.fixture
     def capture(self):
         with patch("src.audio.capture.subprocess") as mock_subprocess, \
-             patch("src.audio.capture.time.sleep"):
+             patch("src.audio.capture.asyncio.sleep", new_callable=AsyncMock):
             mock_subprocess.Popen.return_value.poll.return_value = None
+            import tempfile
+            tmp = Path(tempfile.mkdtemp(prefix="test-chunks-"))
             instance = AudioCapture()
             instance._subprocess_mock = mock_subprocess
-            instance.chunk_dir = Path("/tmp/test-chunks")
-            instance.chunk_dir.mkdir(parents=True, exist_ok=True)
+            instance.chunk_dir = tmp
             yield instance
             # Cleanup
-            if instance.chunk_dir.exists():
-                import shutil
-                shutil.rmtree(instance.chunk_dir, ignore_errors=True)
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def test_init_creates_chunk_dir(self):
         """Init should create the audio chunk directory."""
@@ -47,10 +48,11 @@ class TestAudioCapture:
             mock_settings.audio_device = "test-sink.monitor"
             assert capture.monitor_source == "test-sink.monitor"
 
-    def test_start_launches_ffmpeg(self, capture):
+    @pytest.mark.asyncio
+    async def test_start_launches_ffmpeg(self, capture):
         """Start should spawn an FFmpeg subprocess."""
         mock_popen = capture._subprocess_mock.Popen
-        capture.start()
+        await capture.start()
         mock_popen.assert_called_once()
 
         # Check ffmpeg command args
@@ -68,43 +70,17 @@ class TestAudioCapture:
         assert "-ar" in cmd
         assert "16000" in cmd  # sample rate
 
-    def test_start_uses_segment_output(self, capture):
+    @pytest.mark.asyncio
+    async def test_start_uses_segment_output(self, capture):
         """FFmpeg should use segment muxer for chunked output."""
         mock_popen = capture._subprocess_mock.Popen
-        capture.start()
+        await capture.start()
         cmd = mock_popen.call_args[0][0]
         # Find the *second* "-f" which should be followed by "segment"
         indices = [i for i, v in enumerate(cmd) if v == "-f"]
         assert len(indices) >= 2, f"Expected at least 2 '-f' flags, got: {cmd}"
         segment_idx = indices[1] + 1
         assert cmd[segment_idx] == "segment"
-
-    def test_get_new_chunks_sync_waits_for_next(self, capture):
-        """get_new_chunks_sync yields a chunk only when the next chunk exists."""
-        chunk0 = capture.chunk_dir / "chunk_00000.wav"
-        chunk0.write_text("fake wav data")
-        chunk1 = capture.chunk_dir / "chunk_00001.wav"
-        chunk1.write_text("fake wav data")
-
-        gen = capture.get_new_chunks_sync()
-        first_chunk = next(gen)
-        assert first_chunk == chunk0
-        assert capture._current_chunk == 1
-
-    def test_get_new_chunks_sync_sequential(self, capture):
-        """Multiple chunks should be yielded in order."""
-        chunk0 = capture.chunk_dir / "chunk_00000.wav"
-        chunk0.write_text("chunk 0")
-        chunk1 = capture.chunk_dir / "chunk_00001.wav"
-        chunk1.write_text("chunk 1")
-        chunk2 = capture.chunk_dir / "chunk_00002.wav"
-        chunk2.write_text("chunk 2")
-
-        gen = capture.get_new_chunks_sync()
-        assert next(gen) == chunk0
-        assert capture._current_chunk == 1
-        assert next(gen) == chunk1
-        assert capture._current_chunk == 2
 
     @pytest.mark.asyncio
     async def test_get_new_chunks_async(self, capture):

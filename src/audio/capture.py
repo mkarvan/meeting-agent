@@ -4,9 +4,8 @@ import logging
 import platform
 import shutil
 import subprocess
-import time
 from pathlib import Path
-from typing import AsyncIterator, Iterator
+from typing import AsyncIterator
 
 from src.config import settings
 from src.errors import ffmpeg_not_found, audio_device_error
@@ -30,7 +29,7 @@ class AudioCapture:
     def monitor_source(self) -> str:
         return settings.audio_device
 
-    def start(self) -> None:
+    async def start(self) -> None:
         """Start FFmpeg process capturing audio in 30s chunks."""
         if not shutil.which("ffmpeg"):
             raise ffmpeg_not_found()
@@ -77,8 +76,8 @@ class AudioCapture:
         except OSError as e:
             raise audio_device_error(self.monitor_source, str(e)) from e
 
-        # Give FFmpeg a moment to fail on bad devices
-        time.sleep(1.5)
+        # Give FFmpeg a moment to fail on bad devices (non-blocking)
+        await asyncio.sleep(1.5)
         if self._process.poll() is not None:
             stderr = self._process.stderr.read().decode(errors="replace") if self._process.stderr else ""
             raise audio_device_error(self.monitor_source, stderr.strip().split("\n")[-1] if stderr else "")
@@ -99,20 +98,6 @@ class AudioCapture:
             else:
                 await asyncio.sleep(0.5)
         # Yield the last chunk if it has data
-        last = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
-        if last.exists() and last.stat().st_size > 44:
-            yield last
-
-    def get_new_chunks_sync(self) -> Iterator[Path]:
-        """Synchronous variant for non-async callers."""
-        while not self.stopped:
-            chunk_path = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
-            next_chunk = self.chunk_dir / f"chunk_{self._current_chunk + 1:05d}.wav"
-            if next_chunk.exists():
-                self._current_chunk += 1
-                yield chunk_path
-            else:
-                time.sleep(0.5)
         last = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
         if last.exists() and last.stat().st_size > 44:
             yield last

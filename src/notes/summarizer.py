@@ -1,7 +1,7 @@
 """LLM-powered meeting summarizer — turns transcripts into structured notes."""
+import asyncio
 import json
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import List
 
@@ -77,7 +77,7 @@ class Summarizer:
             lines.append(f"[{m:02d}:{s:02d}] {seg.text}")
         return "\n".join(lines)
 
-    def generate_summary(self) -> MeetingSummary:
+    async def generate_summary(self) -> MeetingSummary:
         transcript = self.build_raw_transcript()
 
         if settings.mode == RunMode.TRANSCRIPT_ONLY:
@@ -113,7 +113,7 @@ class Summarizer:
                 if attempt < MAX_RETRIES - 1:
                     wait = RETRY_BACKOFF[attempt]
                     logger.warning("LLM request failed (%s), retrying in %ds...", e, wait)
-                    time.sleep(wait)
+                    await asyncio.sleep(wait)
             except OpenAIError as e:
                 logger.error("LLM request failed (non-retryable): %s", e)
                 return MeetingSummary(

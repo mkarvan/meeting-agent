@@ -29,6 +29,7 @@ class TestMeetingAgent:
             instance = mock.return_value
             instance.monitor_source = "test-sink.monitor"
             instance.get_new_chunks.return_value = _async_iter([])
+            instance.start = AsyncMock()
             yield mock
 
     @pytest.fixture

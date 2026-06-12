@@ -1,5 +1,6 @@
 """Main orchestrator — ties together audio capture, transcription, summarization, and cleanup."""
 import asyncio
+import platform
 import signal
 import time
 from pathlib import Path
@@ -59,22 +60,45 @@ class MeetingAgent:
         """Capture & transcribe audio only — user joins the meeting manually.
 
         The user must:
-        1. Join the meeting in their own browser/app
-        2. Route their browser audio to the 'Meeting Agent Audio Capture' sink via pavucontrol
-        3. Press Ctrl+C here when the meeting ends
+        Linux:
+          1. Join the meeting in their own browser/app
+          2. Route browser audio to the meeting-agent-sink via pavucontrol
+          3. Press Ctrl+C here when the meeting ends
+        macOS:
+          1. Set system output to Multi-Output Device (BlackHole + speakers)
+          2. Join the meeting in their own browser/app
+          3. Press Ctrl+C here when the meeting ends
         """
-        print(f"🎙️  Meeting Agent — audio-only mode", flush=True)
+        _sys = platform.system()
+
+        print("🎙️  Meeting Agent — audio-only mode", flush=True)
         print(f"📋  Mode: {settings.mode.value}", flush=True)
+        print(f"🎤  Device: {settings.audio_device}", flush=True)
         print(flush=True)
-        print("   ╔══════════════════════════════════════════════╗", flush=True)
-        print("   ║  MANUAL SETUP REQUIRED                       ║", flush=True)
-        print("   ║                                              ║", flush=True)
-        print("   ║  1. Join the meeting in your browser         ║", flush=True)
-        print("   ║  2. Open pavucontrol                         ║", flush=True)
-        print("   ║  3. Playback tab → browser → output →       ║", flush=True)
-        print("   ║     'Meeting Agent Audio Capture'            ║", flush=True)
-        print("   ║  4. Press Ctrl+C when the meeting ends       ║", flush=True)
-        print("   ╚══════════════════════════════════════════════╝", flush=True)
+
+        if _sys == "Darwin":
+            print("   ╔══════════════════════════════════════════════╗", flush=True)
+            print("   ║  macOS SETUP                                 ║", flush=True)
+            print("   ║                                              ║", flush=True)
+            print("   ║  1. Install BlackHole:                       ║", flush=True)
+            print("   ║     brew install blackhole-2ch               ║", flush=True)
+            print("   ║  2. Create Multi-Output Device               ║", flush=True)
+            print("   ║     (Audio MIDI Setup → + → Multi-Output)     ║", flush=True)
+            print("   ║  3. Set system output to Multi-Output        ║", flush=True)
+            print("   ║  4. Join meeting in your browser             ║", flush=True)
+            print("   ║  5. Press Ctrl+C when the meeting ends       ║", flush=True)
+            print("   ╚══════════════════════════════════════════════╝", flush=True)
+        else:
+            print("   ╔══════════════════════════════════════════════╗", flush=True)
+            print("   ║  LINUX SETUP                                 ║", flush=True)
+            print("   ║                                              ║", flush=True)
+            print("   ║  1. Join the meeting in your browser         ║", flush=True)
+            print("   ║  2. Open pavucontrol                         ║", flush=True)
+            print("   ║  3. Playback tab → browser → output →       ║", flush=True)
+            print(f"   ║     '{settings.audio_device}'                ║", flush=True)
+            print("   ║  4. Press Ctrl+C when the meeting ends       ║", flush=True)
+            print("   ╚══════════════════════════════════════════════╝", flush=True)
+
         print(flush=True)
         print("Waiting for audio... (stop with Ctrl+C)", flush=True)
 

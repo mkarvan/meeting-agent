@@ -55,7 +55,12 @@ class TestAudioCapture:
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "ffmpeg"
         assert "-f" in cmd
-        assert "pulse" in cmd
+        # Check for platform-appropriate input format
+        import platform
+        if platform.system() == "Darwin":
+            assert "avfoundation" in cmd
+        else:
+            assert "pulse" in cmd
         assert "-ac" in cmd
         assert "1" in cmd  # mono
         assert "-ar" in cmd

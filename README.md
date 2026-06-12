@@ -11,6 +11,7 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 - **🔀 Three run modes** — full (summary + transcript), transcript-only (free, no LLM), summary-only (no transcript saved)
 - **🗑️ Privacy-first** — WAV audio chunks deleted immediately after transcription; only text is retained
 - **⚙️ Configurable** — CLI flags or environment variables for every setting
+- **🍎 Cross-platform** — Linux (PulseAudio) and macOS (BlackHole/AVFoundation)
 
 ## Use Cases
 
@@ -23,24 +24,24 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 ## Architecture
 
 ```
-🎙️ Audio → PulseAudio sink → FFmpeg (30s WAV chunks)
-                                     ↓
-                              🎯 faster-whisper (local STT)
-                                     ↓
-                              📝 Text transcript (in memory)
-                                     ↓                          ┌──────────┐
-                        ┌────────────┴────────────┐            │  OpenAI   │
-                        │   transcript-only mode   │            │ Anthropic │
-                        │     (no LLM, free)       │            │ OpenCode  │
-                        └────────────┬────────────┘            │  Ollama   │
-                                     │  (full / summary-only)  │  Custom   │
-                                     ↓                         └──────────┘
-                              🤖 LLM → JSON → Markdown notes
+🎙️ Audio → PulseAudio/AVFoundation → FFmpeg (30s WAV chunks)
+                         ↓
+                  🎯 faster-whisper (local STT)
+                         ↓
+                  📝 Text transcript (in memory)
+                         ↓                          ┌──────────┐
+            ┌────────────┴────────────┐            │  OpenAI   │
+            │   transcript-only mode   │            │ Anthropic │
+            │     (no LLM, free)       │            │ OpenCode  │
+            └────────────┬────────────┘            │  Ollama   │
+                         │  (full / summary-only)  │  Custom   │
+                         ↓                         └──────────┘
+                  🤖 LLM → JSON → Markdown notes
 ```
 
 ## Requirements
 
-- **OS:** Linux with PulseAudio (tested on Linux Mint 22.3 / Ubuntu 24.04)
+- **OS:** Linux with PulseAudio (tested on Linux Mint 22.3 / Ubuntu 24.04) or macOS 12+ with BlackHole
 - **Python:** 3.11+
 - **Disk:** ~4 GB for the Whisper model (downloaded on first run)
 - **Memory:** 4 GB+ recommended (Whisper large-v3-turbo)
@@ -66,8 +67,9 @@ uv run python -c "from faster_whisper import WhisperModel; WhisperModel('large-v
 
 ## Setup
 
-### 1. Audio Sink (one-time)
+### 1. Audio Capture (one-time)
 
+**Linux:**
 Create a PulseAudio virtual sink to capture meeting audio:
 
 ```bash
@@ -76,7 +78,38 @@ uv run meeting-agent setup
 
 This creates a virtual sink named `meeting-agent-sink`. Use `pavucontrol` to route your browser's audio into it.
 
-### 2. LLM API Key
+**macOS:**
+Install BlackHole and create a Multi-Output Device:
+
+```bash
+uv run meeting-agent setup
+# Or: bash scripts/setup-audio-macos.sh
+```
+
+Then open **Audio MIDI Setup**, create a Multi-Output Device with both BlackHole 2ch and your speakers/headphones, and set it as your output.
+
+### 2. Choosing an Audio Device
+
+You can capture from any audio device with the `--device` / `-d` flag:
+
+```bash
+# Linux: capture from the virtual sink (default)
+uv run meeting-agent listen --title "Standup"
+
+# Linux: capture from headphones/speakers directly
+uv run meeting-agent listen --title "Standup" --device @DEFAULT_SINK@.monitor
+
+# Linux: capture from a specific hardware device
+uv run meeting-agent listen --title "Standup" --device alsa_output.pci-0000_00_1f.3.analog-stereo.monitor
+
+# macOS: capture from BlackHole (default)
+uv run meeting-agent listen --title "Standup" --device ':0'
+
+# macOS: list available devices
+ffmpeg -f avfoundation -list_devices true -i ''
+```
+
+### 3. LLM API Key
 
 For summarization (not required for transcript-only mode):
 
@@ -182,6 +215,8 @@ All settings can be set via environment variables (prefixed with `MEETING_AGENT_
 | `MEETING_AGENT_LLM_PROVIDER` | `opencode-go` | LLM provider |
 | `MEETING_AGENT_LLM_MODEL` | `deepseek-v4-pro` | Model name |
 | `MEETING_AGENT_LLM_TEMPERATURE` | `0.3` | LLM temperature |
+| `MEETING_AGENT_AUDIO_DEVICE` | `meeting-agent-sink.monitor` (Linux) / `:0` (macOS) | Audio capture device |
+| `MEETING_AGENT_VOLUME_BOOST_DB` | `15.0` | Audio volume boost in dB |
 | `MEETING_AGENT_KEEP_AUDIO` | `false` | Retain WAV files |
 | `MEETING_AGENT_BOT_NAME` | `Meeting Notes Bot` | Display name in meetings |
 | `MEETING_AGENT_WHISPER_MODEL` | `large-v3-turbo` | Whisper model variant |
@@ -197,7 +232,8 @@ All settings can be set via environment variables (prefixed with `MEETING_AGENT_
 ## Limitations
 
 - **Platform UI changes** — Google Meet, Zoom, and Teams change their DOM frequently. Join flows may need updates.
-- **Audio routing** — You must route browser audio into the virtual sink (use `pavucontrol`).
+- **macOS audio routing** — On macOS, you need BlackHole + Multi-Output Device to capture system audio while hearing it. Use `scripts/setup-audio-macos.sh`.
+- **Linux audio routing** — On Linux, you must route browser audio into the virtual sink (use `pavucontrol`), or use `--device @DEFAULT_SINK@.monitor` to capture directly from speakers/headphones.
 - **Speaker diarization** — Does not identify "who said what" (planned for v0.2).
 - **No calendar integration** — Meeting URLs must be provided manually (calendar integration planned).
 

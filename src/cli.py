@@ -1,6 +1,7 @@
 """Command-line interface for the meeting agent."""
 import asyncio
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -35,12 +36,13 @@ def cli():
     help="LLM provider",
 )
 @click.option("--model", type=str, default=None, help="LLM model name (e.g. gpt-4o, claude-sonnet-4-20250514)")
+@click.option("--device", "-d", type=str, default=None, help="Audio capture device (e.g. meeting-agent-sink.monitor, @DEFAULT_SINK@.monitor)")
 @click.option("--keep-audio", is_flag=True, help="Keep WAV audio chunks after transcription (debug only)")
-def join(url: str, name: str, mode: str, provider: str, model: str, keep_audio: bool):
+def join(url: str, name: str, mode: str, provider: str, model: str, device: str, keep_audio: bool):
     """Join a meeting via browser automation and take notes.
     NOTE: Google Meet actively blocks automated browsers.
     For Google Meet, use the 'listen' command instead and join manually."""
-    _apply_settings(mode, provider, model, keep_audio)
+    _apply_settings(mode, provider, model, keep_audio, device)
     agent = MeetingAgent()
     asyncio.run(agent.run(url, name))
 
@@ -60,16 +62,29 @@ def join(url: str, name: str, mode: str, provider: str, model: str, keep_audio: 
     help="LLM provider (only used with --mode full or summary_only)",
 )
 @click.option("--model", type=str, default=None, help="LLM model name")
+@click.option("--device", "-d", type=str, default=None, help="Audio capture device (Linux: meeting-agent-sink.monitor, @DEFAULT_SINK@.monitor; macOS: :0, 'BlackHole 2ch')")
 @click.option("--keep-audio", is_flag=True, help="Keep WAV audio chunks (debug)")
-def listen(title: str, mode: str, provider: str, model: str, keep_audio: bool):
+def listen(title: str, mode: str, provider: str, model: str, device: str, keep_audio: bool):
     """Capture & transcribe system audio — you join the meeting manually.
 
-    1. Join the meeting yourself in a browser or app
-    2. Route audio via pavucontrol to 'Meeting Agent Audio Capture'
-    3. Run this command — it transcribes in real-time
-    4. Press Ctrl+C when the meeting ends to save the transcript
+    Linux:
+      1. Join the meeting yourself in a browser or app
+      2. Route audio via pavucontrol to 'Meeting Agent Audio Capture'
+      3. Run this command — it transcribes in real-time
+      4. Press Ctrl+C when the meeting ends
+
+    macOS:
+      1. Install BlackHole: brew install blackhole-2ch
+      2. Create a Multi-Output Device in Audio MIDI Setup (BlackHole + your speakers)
+      3. Join the meeting and set system output to the Multi-Output Device
+      4. Run this command with --device ':0'
+      5. Press Ctrl+C when the meeting ends
+
+    You can capture from any device with --device:
+      Linux:   --device @DEFAULT_SINK@.monitor (headphones/speakers)
+      macOS:   --device ':0' (BlackHole) or --device ':1' (mic)
     """
-    _apply_settings(mode, provider, model, keep_audio)
+    _apply_settings(mode, provider, model, keep_audio, device)
     agent = MeetingAgent()
     try:
         asyncio.run(agent.listen(title))
@@ -79,8 +94,28 @@ def listen(title: str, mode: str, provider: str, model: str, keep_audio: bool):
 
 @cli.command()
 def setup():
-    """Set up audio sink and dependencies."""
+    """Set up audio capture for your platform.
+
+    Linux:   Creates PulseAudio virtual sink + loopback
+    macOS:   Instructions for BlackHole + Multi-Output Device
+    """
     import subprocess
+
+    if platform.system() == "Darwin":
+        print("🍎 macOS audio setup")
+        print()
+        print("1. Install BlackHole virtual audio driver:")
+        print("   brew install blackhole-2ch")
+        print()
+        print("2. Open Audio MIDI Setup (Applications > Utilities)")
+        print("3. Click '+' → 'Create Multi-Output Device'")
+        print("4. Check both 'BlackHole 2ch' AND your speakers/headphones")
+        print("5. Right-click the Multi-Output Device → 'Use This Device For Sound Output'")
+        print()
+        print("Then run:  meeting-agent listen --device ':0' --title 'Meeting'")
+        return
+
+    # Linux: run the PulseAudio setup script
     script = Path(__file__).parent.parent / "scripts" / "setup-audio-sink.sh"
     if script.exists():
         subprocess.run(["bash", str(script)])
@@ -91,19 +126,29 @@ def setup():
 
 @cli.command()
 def status():
-    """Check system readiness for meeting capture."""
+    """Check system readiness for meeting capture (Linux/macOS)."""
     import subprocess
 
-    print("🔍 Meeting Agent Status Check\n")
+    _sys = platform.system()
+    print(f"🔍 Meeting Agent Status Check ({_sys})\n")
 
     # Check ffmpeg
     r = subprocess.run(["which", "ffmpeg"], capture_output=True)
     print(f"{'✅' if r.returncode == 0 else '❌'} ffmpeg: {r.stdout.decode().strip() or 'not found'}")
 
-    # Check pulseaudio
-    r = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
-    has_sink = "meeting-agent-sink" in r.stdout
-    print(f"{'✅' if has_sink else '❌'} Audio sink 'meeting-agent-sink': {'present' if has_sink else 'missing — run: meeting-agent setup'}")
+    if _sys == "Darwin":
+        # macOS: check BlackHole
+        r = subprocess.run(
+            ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", '""'],
+            capture_output=True, text=True
+        )
+        has_blackhole = "BlackHole" in r.stderr
+        print(f"{'✅' if has_blackhole else '❌'} BlackHole: {'found' if has_blackhole else 'missing — run: brew install blackhole-2ch'}")
+    else:
+        # Linux: check pulseaudio sink
+        r = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
+        has_sink = "meeting-agent-sink" in r.stdout
+        print(f"{'✅' if has_sink else '❌'} Audio sink 'meeting-agent-sink': {'present' if has_sink else 'missing — run: meeting-agent setup'}")
 
     # Check whisper model
     wm = Path.home() / ".cache" / "huggingface" / "hub"
@@ -116,22 +161,30 @@ def status():
 
     # Check chromium
     cr = Path.home() / ".cache" / "ms-playwright" / "chromium-1223" / "chrome-linux64" / "chrome"
+    if _sys == "Darwin":
+        cr = Path.home() / "Library" / "Caches" / "ms-playwright" / "chromium-1223" / "chrome-mac" / "Chromium.app"
     print(f"{'✅' if cr.exists() else '❌'} Playwright Chromium: {'installed' if cr.exists() else 'missing'}")
 
     # Check notes dir
     nd = settings.notes_dir
     print(f"{'✅' if nd.exists() else 'ℹ️'} Notes directory: {nd}")
 
-    print("\n💡 Quick start:  meeting-agent listen --title 'Standup'")
+    # Show configured audio device
+    print(f"🎤 Audio device: {settings.audio_device}")
+    print(f"🔊 Volume boost: {settings.volume_boost_db} dB")
+
+    print(f"\n💡 Quick start:  meeting-agent listen --title 'Standup'")
 
 
-def _apply_settings(mode: str, provider: str, model: str | None, keep_audio: bool):
+def _apply_settings(mode: str, provider: str, model: str | None, keep_audio: bool, device: str | None = None):
     settings.mode = RunMode(mode)
     settings.llm_provider = LLMProvider(provider)
     if model:
         settings.llm_model = model
     if keep_audio:
         settings.keep_audio = True
+    if device:
+        settings.audio_device = device
 
 
 if __name__ == "__main__":

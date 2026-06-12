@@ -111,6 +111,26 @@ class TestCLI:
         ])
         assert result.exit_code == 0
 
+    @patch("src.cli.MeetingAgent")
+    @patch("src.cli.asyncio.run")
+    def test_join_with_device(self, mock_asyncio_run, mock_agent, runner):
+        """Join with custom audio device."""
+        result = runner.invoke(cli, [
+            "join", "https://meet.google.com/abc-defg-hij",
+            "--device", "@DEFAULT_SINK@.monitor"
+        ])
+        assert result.exit_code == 0
+
+    @patch("src.cli.MeetingAgent")
+    @patch("src.cli.asyncio.run")
+    def test_listen_with_device(self, mock_asyncio_run, mock_agent, runner):
+        """Listen with custom audio device."""
+        result = runner.invoke(cli, [
+            "listen", "--title", "Standup",
+            "--device", "@DEFAULT_SINK@.monitor"
+        ])
+        assert result.exit_code == 0
+
     def test_setup_runs_script(self, runner):
         """Setup command should run or fail gracefully."""
         result = runner.invoke(cli, ["setup"])

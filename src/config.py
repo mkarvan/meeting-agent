@@ -1,9 +1,12 @@
 """Configuration for the meeting agent — supports multiple LLM providers and run modes."""
 import os
+import platform
 from pathlib import Path
 from enum import Enum
 from typing import Optional
 from pydantic_settings import BaseSettings
+
+_IS_MACOS = platform.system() == "Darwin"
 
 
 class RunMode(str, Enum):
@@ -31,7 +34,8 @@ class Settings(BaseSettings):
     # Audio
     sample_rate: int = 16000
     chunk_duration: int = 30
-    audio_device: str = "meeting-agent-sink.monitor"
+    audio_device: str = ":0" if _IS_MACOS else "meeting-agent-sink.monitor"
+    volume_boost_db: float = 15.0
     keep_audio: bool = False
 
     # Whisper

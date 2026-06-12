@@ -66,7 +66,13 @@ class TestSettingsDefaults:
         s = Settings()
         assert s.sample_rate == 16000
         assert s.chunk_duration == 30
-        assert s.audio_device == "meeting-agent-sink.monitor"
+        # Default audio_device varies by platform
+        import platform
+        if platform.system() == "Darwin":
+            assert s.audio_device == ":0"
+        else:
+            assert s.audio_device == "meeting-agent-sink.monitor"
+        assert s.volume_boost_db == 15.0
         assert s.keep_audio is False
 
     def test_whisper_defaults(self):

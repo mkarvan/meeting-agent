@@ -1,4 +1,5 @@
-"""Audio capture using FFmpeg and PulseAudio virtual sink."""
+"""Audio capture using FFmpeg — supports PulseAudio (Linux) and AVFoundation (macOS)."""
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -6,9 +7,11 @@ from typing import Iterator
 
 from src.config import settings
 
+_IS_MACOS = platform.system() == "Darwin"
+
 
 class AudioCapture:
-    """Captures system audio via PulseAudio virtual sink."""
+    """Captures system audio via PulseAudio virtual sink (Linux) or BlackHole/AVFoundation (macOS)."""
 
     def __init__(self):
         self.chunk_dir = settings.audio_dir
@@ -25,18 +28,41 @@ class AudioCapture:
         """Start FFmpeg process capturing audio in 30s chunks."""
         self.stopped = False
         output_pattern = str(self.chunk_dir / "chunk_%05d.wav")
-        cmd = [
-            "ffmpeg",
-            "-f", "pulse",
-            "-i", self.monitor_source,
-            "-af", "volume=15dB",   # boost quiet meeting audio
-            "-ac", "1",           # mono
-            "-ar", str(settings.sample_rate),  # 16kHz for whisper
-            "-f", "segment",
-            "-segment_time", str(settings.chunk_duration),
-            "-reset_timestamps", "1",
-            output_pattern,
-        ]
+
+        if _IS_MACOS:
+            # macOS: use AVFoundation (e.g. BlackHole virtual device)
+            cmd = [
+                "ffmpeg",
+                "-f", "avfoundation",
+                "-i", self.monitor_source,   # e.g. ":0" or "BlackHole 2ch"
+                "-ac", "1",                   # mono
+                "-ar", str(settings.sample_rate),  # 16kHz for whisper
+                "-f", "segment",
+                "-segment_time", str(settings.chunk_duration),
+                "-reset_timestamps", "1",
+                output_pattern,
+            ]
+            # Apply volume boost via audio filter
+            if settings.volume_boost_db != 0.0:
+                # Insert -af volume= before -ac
+                ac_idx = cmd.index("-ac")
+                cmd.insert(ac_idx, f"volume={settings.volume_boost_db}dB")
+                cmd.insert(ac_idx, "-af")
+        else:
+            # Linux: use PulseAudio
+            cmd = [
+                "ffmpeg",
+                "-f", "pulse",
+                "-i", self.monitor_source,
+                "-af", f"volume={settings.volume_boost_db}dB",
+                "-ac", "1",                   # mono
+                "-ar", str(settings.sample_rate),  # 16kHz for whisper
+                "-f", "segment",
+                "-segment_time", str(settings.chunk_duration),
+                "-reset_timestamps", "1",
+                output_pattern,
+            ]
+
         self._process = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,

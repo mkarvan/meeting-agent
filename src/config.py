@@ -1,12 +1,53 @@
-"""Configuration for the meeting agent — supports multiple LLM providers and run modes."""
+"""Configuration for the meeting agent — supports multiple LLM providers and run modes.
+
+Priority: CLI flags > env vars > config file > defaults.
+Config file locations (first found wins):
+  1. .meeting-agent.toml  (project-local)
+  2. ~/.config/meeting-agent/config.toml
+"""
 import os
 import platform
+import tomllib
 from pathlib import Path
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _IS_MACOS = platform.system() == "Darwin"
+
+CONFIG_PATHS = [
+    Path(".meeting-agent.toml"),
+    Path.home() / ".config" / "meeting-agent" / "config.toml",
+]
+
+
+def _load_config_file() -> dict[str, Any]:
+    """Load the first config file found, or return empty dict."""
+    for path in CONFIG_PATHS:
+        if path.is_file():
+            try:
+                with open(path, "rb") as f:
+                    return tomllib.load(f)
+            except tomllib.TOMLDecodeError as e:
+                import sys
+                print(f"Warning: invalid config file {path}: {e}", file=sys.stderr)
+                return {}
+    return {}
+
+
+def _flatten_toml(data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Flatten nested TOML sections into dot-free keys matching Settings fields.
+
+    E.g. {"llm": {"provider": "openai"}} -> {"llm_provider": "openai"}
+    """
+    flat: dict[str, Any] = {}
+    for key, value in data.items():
+        full_key = f"{prefix}_{key}" if prefix else key
+        if isinstance(value, dict):
+            flat.update(_flatten_toml(value, full_key))
+        else:
+            flat[full_key] = value
+    return flat
 
 
 class RunMode(str, Enum):
@@ -24,7 +65,7 @@ class LLMProvider(str, Enum):
 
 
 class Settings(BaseSettings):
-    """Agent settings loaded from env vars."""
+    """Agent settings loaded from config file, env vars, or CLI flags."""
 
     # Paths
     project_root: Path = Path(__file__).resolve().parent.parent  # repo root
@@ -107,10 +148,23 @@ class Settings(BaseSettings):
     def model_post_init(self, __context) -> None:
         """Resolve relative paths against project_root."""
         if not self.notes_dir.is_absolute():
-            # Use object.__setattr__ to bypass pydantic validation
             object.__setattr__(self, 'notes_dir', (self.project_root / self.notes_dir).resolve())
 
     model_config = SettingsConfigDict(env_prefix="MEETING_AGENT_")
 
 
-settings = Settings()
+def _build_settings() -> Settings:
+    """Build Settings with config-file values as defaults (env vars override)."""
+    file_config = _flatten_toml(_load_config_file())
+    try:
+        if file_config:
+            return Settings(**file_config)
+        return Settings()
+    except Exception as e:
+        import sys
+        print(f"Warning: invalid configuration: {e}", file=sys.stderr)
+        print("Falling back to defaults.", file=sys.stderr)
+        return Settings()
+
+
+settings = _build_settings()

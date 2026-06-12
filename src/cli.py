@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 import click
-from src.config import settings, RunMode, LLMProvider
+from src.config import settings, RunMode, LLMProvider, CONFIG_PATHS
+from src.errors import MeetingAgentError
 from src.orchestrator import MeetingAgent
 
 logger = logging.getLogger("meeting_agent")
@@ -22,7 +23,27 @@ def _configure_logging():
     root.setLevel(logging.INFO)
 
 
-@click.group()
+def _handle_error(e: Exception) -> None:
+    """Print a user-friendly error and exit."""
+    if isinstance(e, MeetingAgentError):
+        click.echo(f"\nError: {e}", err=True)
+    else:
+        click.echo(f"\nUnexpected error: {e}", err=True)
+        click.echo("If this persists, please file an issue.", err=True)
+    sys.exit(1)
+
+
+class SafeGroup(click.Group):
+    """Click group that catches MeetingAgentError and shows clean messages."""
+
+    def invoke(self, ctx):
+        try:
+            return super().invoke(ctx)
+        except MeetingAgentError as e:
+            _handle_error(e)
+
+
+@click.group(cls=SafeGroup)
 def cli():
     """Meeting Agent — AI-powered meeting notes."""
     _configure_logging()
@@ -51,8 +72,13 @@ def join(url: str, name: str, mode: str, provider: str, model: str, device: str,
     NOTE: Google Meet actively blocks automated browsers.
     For Google Meet, use the 'listen' command instead and join manually."""
     _apply_settings(mode, provider, model, keep_audio, device)
-    agent = MeetingAgent()
-    asyncio.run(agent.run(url, name))
+    try:
+        agent = MeetingAgent()
+        asyncio.run(agent.run(url, name))
+    except MeetingAgentError:
+        raise
+    except Exception as e:
+        _handle_error(e)
 
 
 @cli.command()
@@ -93,11 +119,15 @@ def listen(title: str, mode: str, provider: str, model: str, device: str, keep_a
       macOS:   --device ':0' (BlackHole) or --device ':1' (mic)
     """
     _apply_settings(mode, provider, model, keep_audio, device)
-    agent = MeetingAgent()
     try:
+        agent = MeetingAgent()
         asyncio.run(agent.listen(title))
     except KeyboardInterrupt:
         logger.info("Stopped by user.")
+    except MeetingAgentError:
+        raise
+    except Exception as e:
+        _handle_error(e)
 
 
 @cli.command()
@@ -135,29 +165,33 @@ def setup():
 @cli.command()
 def status():
     """Check system readiness for meeting capture (Linux/macOS)."""
+    import shutil
     import subprocess
 
     _sys = platform.system()
     click.echo(f"Meeting Agent Status Check ({_sys})\n")
 
     # Check ffmpeg
-    r = subprocess.run(["which", "ffmpeg"], capture_output=True)
-    ok = r.returncode == 0
-    click.echo(f"{'[ok]' if ok else '[missing]'} ffmpeg: {r.stdout.decode().strip() or 'not found'}")
+    ffmpeg_path = shutil.which("ffmpeg")
+    click.echo(f"{'[ok]' if ffmpeg_path else '[missing]'} ffmpeg: {ffmpeg_path or 'not found — brew install ffmpeg'}")
 
     if _sys == "Darwin":
-        # macOS: check BlackHole
-        r = subprocess.run(
-            ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", '""'],
-            capture_output=True, text=True
-        )
-        has_blackhole = "BlackHole" in r.stderr
-        click.echo(f"{'[ok]' if has_blackhole else '[missing]'} BlackHole: {'found' if has_blackhole else 'missing — run: brew install blackhole-2ch'}")
+        if ffmpeg_path:
+            r = subprocess.run(
+                ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", '""'],
+                capture_output=True, text=True
+            )
+            has_blackhole = "BlackHole" in r.stderr
+            click.echo(f"{'[ok]' if has_blackhole else '[missing]'} BlackHole: {'found' if has_blackhole else 'missing — run: brew install blackhole-2ch'}")
+        else:
+            click.echo("[skip] BlackHole: cannot check without ffmpeg")
     else:
-        # Linux: check pulseaudio sink
-        r = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
-        has_sink = "meeting-agent-sink" in r.stdout
-        click.echo(f"{'[ok]' if has_sink else '[missing]'} Audio sink 'meeting-agent-sink': {'present' if has_sink else 'missing — run: meeting-agent setup'}")
+        if shutil.which("pactl"):
+            r = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
+            has_sink = "meeting-agent-sink" in r.stdout
+            click.echo(f"{'[ok]' if has_sink else '[missing]'} Audio sink 'meeting-agent-sink': {'present' if has_sink else 'missing — run: meeting-agent setup'}")
+        else:
+            click.echo("[missing] pactl: PulseAudio not installed")
 
     # Check whisper model
     wm = Path.home() / ".cache" / "huggingface" / "hub"
@@ -176,6 +210,13 @@ def status():
     has_chromium = any(pw_dir.glob("chromium-*")) if pw_dir.exists() else False
     click.echo(f"{'[ok]' if has_chromium else '[missing]'} Playwright Chromium: {'installed' if has_chromium else 'missing — run: playwright install chromium'}")
 
+    # Config file
+    config_file = next((p for p in CONFIG_PATHS if p.is_file()), None)
+    if config_file:
+        click.echo(f"[ok] Config file: {config_file}")
+    else:
+        click.echo(f"[info] Config file: none found (create ~/.config/meeting-agent/config.toml)")
+
     # Check notes dir
     nd = settings.notes_dir
     click.echo(f"{'[ok]' if nd.exists() else '[info]'} Notes directory: {nd}")
@@ -185,6 +226,87 @@ def status():
     click.echo(f"Volume boost: {settings.volume_boost_db} dB")
 
     click.echo(f"\nQuick start:  meeting-agent listen --title 'Standup'")
+
+
+@cli.command()
+@click.option("--init", "do_init", is_flag=True, help="Create a starter config file")
+@click.option("--path", "show_path", is_flag=True, help="Show active config file path")
+@click.option("--show", "show_config", is_flag=True, help="Show current effective settings")
+def config(do_init: bool, show_path: bool, show_config: bool):
+    """Manage the meeting-agent configuration file."""
+    if show_path:
+        active = next((p for p in CONFIG_PATHS if p.is_file()), None)
+        if active:
+            click.echo(active)
+        else:
+            click.echo("No config file found. Create one with: meeting-agent config --init")
+        return
+
+    if show_config:
+        click.echo(f"mode:           {settings.mode.value}")
+        click.echo(f"llm_provider:   {settings.llm_provider.value}")
+        click.echo(f"llm_model:      {settings.llm_model}")
+        click.echo(f"llm_temperature: {settings.llm_temperature}")
+        click.echo(f"audio_device:   {settings.audio_device}")
+        click.echo(f"volume_boost_db: {settings.volume_boost_db}")
+        click.echo(f"whisper_model:  {settings.whisper_model}")
+        click.echo(f"whisper_device: {settings.whisper_device}")
+        click.echo(f"notes_dir:      {settings.notes_dir}")
+        click.echo(f"keep_audio:     {settings.keep_audio}")
+        click.echo(f"bot_name:       {settings.bot_name}")
+        active = next((p for p in CONFIG_PATHS if p.is_file()), None)
+        click.echo(f"\nConfig file:    {active or 'none'}")
+        return
+
+    if do_init:
+        target = CONFIG_PATHS[1]  # ~/.config/meeting-agent/config.toml
+        if target.exists():
+            click.echo(f"Config file already exists: {target}")
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_STARTER_CONFIG)
+        click.echo(f"Created config file: {target}")
+        click.echo("Edit it with your preferred settings, then re-run meeting-agent.")
+        return
+
+    # No flags: show help
+    ctx = click.get_current_context()
+    click.echo(ctx.get_help())
+
+
+_STARTER_CONFIG = """\
+# Meeting Agent configuration
+# Docs: https://github.com/mkarvan/meeting-agent#configuration
+# Priority: CLI flags > env vars > this file > defaults
+
+[audio]
+# device = ":0"                  # macOS: BlackHole device index
+# device = "meeting-agent-sink.monitor"  # Linux: PulseAudio virtual sink
+# volume_boost_db = 15.0
+# chunk_duration = 30
+# keep_audio = false
+
+[whisper]
+# model = "large-v3-turbo"
+# device = "cpu"                 # "cpu" or "cuda"
+# compute_type = "int8"
+
+[llm]
+# provider = "opencode-go"       # openai, anthropic, opencode-go, ollama, custom
+# model = "deepseek-v4-pro"
+# temperature = 0.3
+
+# API keys — prefer env vars for secrets, but you can set them here:
+# openai_api_key = "sk-..."
+# anthropic_api_key = "sk-ant-..."
+# opencode_api_key = "..."
+# custom_api_key = "..."
+# custom_base_url = "http://localhost:8080/v1"
+
+[meeting]
+# bot_name = "Meeting Notes Bot"
+# mode = "full"                  # full, transcript_only, summary_only
+"""
 
 
 def _apply_settings(mode: str, provider: str, model: str | None, keep_audio: bool, device: str | None = None):

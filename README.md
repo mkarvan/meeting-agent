@@ -242,7 +242,54 @@ Summary files follow this format:
 
 ## Configuration
 
-All settings can be set via environment variables (prefixed with `MEETING_AGENT_`):
+Settings are loaded in this priority order: **CLI flags > environment variables > config file > defaults**.
+
+### Config File
+
+Create a config file to avoid repeating settings:
+
+```bash
+# Generate a starter config file at ~/.config/meeting-agent/config.toml
+uv run meeting-agent config --init
+
+# Show current effective settings
+uv run meeting-agent config --show
+
+# Show which config file is active
+uv run meeting-agent config --path
+```
+
+Config file locations (first found wins):
+1. `.meeting-agent.toml` (project-local)
+2. `~/.config/meeting-agent/config.toml`
+
+Example config file:
+
+```toml
+[audio]
+device = ":0"                    # macOS: BlackHole device
+volume_boost_db = 15.0
+
+[whisper]
+model = "large-v3-turbo"
+device = "cpu"
+
+[llm]
+provider = "openai"
+model = "gpt-4o"
+temperature = 0.3
+
+# API keys — prefer env vars for secrets, but you can set them here:
+# openai_api_key = "sk-..."
+
+[meeting]
+bot_name = "Meeting Notes Bot"
+mode = "full"
+```
+
+### Environment Variables
+
+All settings can also be set via environment variables (prefixed with `MEETING_AGENT_`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|

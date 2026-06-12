@@ -4,7 +4,7 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 
 ## Features
 
-- **Join meetings automatically** — Google Meet, Zoom, Microsoft Teams via browser automation
+- **Join meetings automatically** — Google Meet, Zoom, Microsoft Teams via browser automation (Webex URLs are parsed but auto-join is not yet supported)
 - **Transcribe locally** — faster-whisper (large-v3-turbo) runs entirely on your machine; audio never leaves it
 - **LLM-powered summaries** — structured notes with key topics, decisions, and action items
 - **Multi-provider** — OpenAI, Anthropic, OpenCode Go, Ollama, or any OpenAI-compatible endpoint
@@ -124,8 +124,8 @@ export OPENCODE_API_KEY="your-key"
 # Or OpenAI
 export OPENAI_API_KEY="sk-..."
 
-# Or Anthropic
-export ANTHROPIC_API_KEY="sk-ant-..."
+# Or Anthropic (requires an OpenAI-compatible proxy — see note below)
+export ANTHROPIC_API_KEY="***"
 
 # Or Ollama (local, no key needed)
 # Ensure ollama is running: ollama serve
@@ -156,8 +156,8 @@ Automatically join a meeting via browser and take notes:
 # Full mode — join, transcribe, and generate notes
 uv run meeting-agent join "https://meet.google.com/abc-defg-hij"
 
-# Custom bot name
-uv run meeting-agent join "https://zoom.us/j/123456789" --name "Notes Bot"
+# Custom bot name and meeting title
+uv run meeting-agent join "https://zoom.us/j/123456789" --name "Notes Bot" --title "Sprint Planning"
 ```
 
 > **Note:** Google Meet actively blocks automated browsers. For Google Meet, use `listen` mode and join the meeting manually in your browser.
@@ -181,7 +181,7 @@ uv run meeting-agent listen --title "Meeting" --mode summary_only
 # Use OpenAI
 uv run meeting-agent listen --title "Meeting" --mode full --provider openai --model gpt-4o
 
-# Use Anthropic Claude
+# Use Anthropic Claude (requires an OpenAI-compatible proxy like LiteLLM)
 uv run meeting-agent listen --title "Meeting" --mode full --provider anthropic --model claude-sonnet-4-20250514
 
 # Use local Ollama
@@ -205,6 +205,9 @@ uv run meeting-agent status
 ```bash
 # Keep WAV audio files after transcription (for debugging)
 uv run meeting-agent listen --title "Debug" --keep-audio
+
+# Enable verbose debug logging
+uv run meeting-agent --log-level DEBUG listen --title "Debug" --keep-audio
 ```
 
 ### Output
@@ -296,7 +299,7 @@ All settings can also be set via environment variables (prefixed with `MEETING_A
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEETING_AGENT_MODE` | `full` | Run mode: `full`, `transcript_only`, `summary_only` |
+| `MEETING_AGENT_MODE` | `full` (config default; `listen` CLI defaults to `transcript_only`) | Run mode: `full`, `transcript_only`, `summary_only` |
 | `MEETING_AGENT_LLM_PROVIDER` | `opencode-go` | LLM provider |
 | `MEETING_AGENT_LLM_MODEL` | `deepseek-v4-pro` | Model name |
 | `MEETING_AGENT_LLM_TEMPERATURE` | `0.3` | LLM temperature |
@@ -320,6 +323,7 @@ All settings can also be set via environment variables (prefixed with `MEETING_A
 - **Google Meet bot detection** — Google Meet actively blocks automated browsers. Use `listen` mode instead.
 - **macOS audio routing** — On macOS, you need BlackHole + Multi-Output Device to capture system audio while hearing it. Use `scripts/setup-audio-macos.sh`.
 - **Linux audio routing** — On Linux, you must route browser audio into the virtual sink (use `pavucontrol`), or use `--device @DEFAULT_SINK@.monitor` to capture directly from speakers/headphones.
+- **Anthropic provider** — Requires an OpenAI-compatible proxy (e.g. [LiteLLM](https://github.com/BerriAI/litellm)) to translate the Anthropic Messages API into the OpenAI chat completions format the agent uses. Alternatively, use `--provider custom` with the proxy's base URL.
 - **Speaker diarization** — Does not identify "who said what" (planned for v0.2).
 - **No calendar integration** — Meeting URLs must be provided manually (calendar integration planned).
 

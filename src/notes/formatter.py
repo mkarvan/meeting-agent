@@ -66,9 +66,21 @@ def format_meeting_notes(summary: MeetingSummary) -> str:
     return "\n".join(lines)
 
 
+def _sanitize_filename(title: str) -> str:
+    """Sanitize a title for use as a filename: remove path traversal and unsafe chars."""
+    import re
+    # Replace path separators and other unsafe filesystem characters
+    safe = re.sub(r'[/\\:*?"<>|]', '_', title)
+    # Remove any directory traversal attempts
+    safe = safe.replace('..', '')
+    # Collapse multiple underscores/spaces
+    safe = re.sub(r'[_\s]+', '_', safe).strip('_')
+    return safe[:50]
+
+
 def save_notes(summary: MeetingSummary) -> Path:
     now = datetime.now()
-    safe_title = summary.title.replace(" ", "_")[:50]
+    safe_title = _sanitize_filename(summary.title)
     filename = f"{now.strftime('%Y-%m-%d_%H%M')}_{safe_title}.md"
 
     settings.notes_dir.mkdir(parents=True, exist_ok=True)

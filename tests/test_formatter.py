@@ -335,3 +335,43 @@ class TestSaveNotes:
             content = result_path.read_text()
             assert "# Empty Meeting" in content
             assert "## Full Transcript" not in content
+
+
+class TestSanitizeFilename:
+    """Tests for _sanitize_filename path traversal and unsafe char handling."""
+
+    def test_normal_title(self):
+        from src.notes.formatter import _sanitize_filename
+        assert _sanitize_filename("Weekly Standup") == "Weekly_Standup"
+
+    def test_path_traversal(self):
+        from src.notes.formatter import _sanitize_filename
+        assert ".." not in _sanitize_filename("../../etc/passwd")
+
+    def test_slashes_replaced(self):
+        from src.notes.formatter import _sanitize_filename
+        result = _sanitize_filename("Standup/Review")
+        assert "/" not in result
+        assert "\\" not in result
+
+    def test_colons_replaced(self):
+        from src.notes.formatter import _sanitize_filename
+        result = _sanitize_filename("Meeting: Q3 Review")
+        assert ":" not in result
+
+    def test_truncation(self):
+        from src.notes.formatter import _sanitize_filename
+        long = "A" * 100
+        assert len(_sanitize_filename(long)) <= 50
+
+    def test_special_chars_replaced(self):
+        from src.notes.formatter import _sanitize_filename
+        result = _sanitize_filename('Meeting*With?"Bad<>Chars|')
+        for ch in r'\:*?"<>|/':
+            assert ch not in result
+
+    def test_empty_string(self):
+        from src.notes.formatter import _sanitize_filename
+        # Should not crash on empty input
+        result = _sanitize_filename("")
+        assert isinstance(result, str)

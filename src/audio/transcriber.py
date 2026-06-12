@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from faster_whisper import WhisperModel
 from src.config import settings
+from src.errors import whisper_load_error
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,14 @@ class Transcriber:
     """Transcribes audio using faster-whisper."""
 
     def __init__(self):
-        self.model = WhisperModel(
-            settings.whisper_model,
-            device=settings.whisper_device,
-            compute_type=settings.whisper_compute_type,
-        )
+        try:
+            self.model = WhisperModel(
+                settings.whisper_model,
+                device=settings.whisper_device,
+                compute_type=settings.whisper_compute_type,
+            )
+        except Exception as e:
+            raise whisper_load_error(str(e)) from e
         self._meeting_offset: float = 0.0
 
     def transcribe(self, audio_path: Path) -> List[TranscriptionSegment]:

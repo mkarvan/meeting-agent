@@ -157,21 +157,29 @@ class MeetingAgent:
         transcript_md += "\n".join(self._transcript_lines) if self._transcript_lines else "*No speech detected.*"
         transcript_md += "\n"
 
-        settings.notes_dir.mkdir(parents=True, exist_ok=True)
-        transcript_path.write_text(transcript_md)
+        try:
+            settings.notes_dir.mkdir(parents=True, exist_ok=True)
+            transcript_path.write_text(transcript_md)
+        except OSError as e:
+            logger.error("Failed to save transcript: %s", e)
+        else:
+            logger.info("Transcript saved to: %s", transcript_path)
 
-        logger.info("Transcript saved to: %s", transcript_path)
         logger.info("Duration: %d min", duration)
         logger.info("Lines transcribed: %d", len(self._transcript_lines))
         logger.info("Audio chunks processed & deleted: %d", self._chunk_count)
 
         # Generate LLM summary if in full mode
         if self.summarizer and settings.mode != RunMode.TRANSCRIPT_ONLY and self._transcript_lines:
-            summary = self.summarizer.generate_summary()
-            summary.duration_minutes = duration
-            summary.date = datetime.now().strftime("%Y-%m-%d")
-            summary_path = save_notes(summary)
-            logger.info("Summary saved to: %s", summary_path)
+            try:
+                summary = self.summarizer.generate_summary()
+                summary.duration_minutes = duration
+                summary.date = datetime.now().strftime("%Y-%m-%d")
+                summary_path = save_notes(summary)
+                logger.info("Summary saved to: %s", summary_path)
+            except Exception as e:
+                logger.error("Failed to generate summary: %s", e)
+                logger.info("Transcript was saved — you can re-summarize later.")
 
     # ── Helpers ──────────────────────────────────────────────────────────
 

@@ -4,6 +4,8 @@ import logging
 import time
 from playwright.async_api import async_playwright, Browser, Page
 
+from src.errors import BrowserError, chromium_not_found
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,15 +21,21 @@ class MeetingConnector:
         """Launch browser with anti-detection measures."""
         from playwright_stealth import Stealth
 
-        self._playwright = await async_playwright().start()
-        self.browser = await self._playwright.chromium.launch(
-            headless=False,
-            args=[
-                "--use-fake-device-for-media-stream",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-            ],
-        )
+        try:
+            self._playwright = await async_playwright().start()
+            self.browser = await self._playwright.chromium.launch(
+                headless=False,
+                args=[
+                    "--use-fake-device-for-media-stream",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                ],
+            )
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "executable doesn't exist" in err_msg or "browsertype.launch" in err_msg:
+                raise chromium_not_found() from e
+            raise BrowserError(f"Failed to launch browser: {e}") from e
         context = await self.browser.new_context(
             viewport={"width": 1280, "height": 720},
             user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",

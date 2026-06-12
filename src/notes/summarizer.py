@@ -5,9 +5,10 @@ import time
 from dataclasses import dataclass, field
 from typing import List
 
-from openai import OpenAI, APITimeoutError, APIConnectionError, RateLimitError
+from openai import OpenAI, OpenAIError, APITimeoutError, APIConnectionError, RateLimitError
 from src.audio.transcriber import TranscriptionSegment
 from src.config import settings, RunMode
+from src.errors import llm_credentials_missing, llm_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,16 @@ class Summarizer:
         if self._client is not None:
             return
         llm_config = settings.get_llm_config()
-        self._client = OpenAI(
-            api_key=llm_config["api_key"],
-            base_url=llm_config["base_url"],
-        )
+        api_key = llm_config["api_key"]
+        if not api_key:
+            raise llm_credentials_missing(settings.llm_provider.value)
+        try:
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=llm_config["base_url"],
+            )
+        except OpenAIError as e:
+            raise llm_credentials_missing(settings.llm_provider.value) from e
         self._model = llm_config["model"]
 
     def add_segments(self, segments: List[TranscriptionSegment]) -> None:
@@ -107,6 +114,19 @@ class Summarizer:
                     wait = RETRY_BACKOFF[attempt]
                     logger.warning("LLM request failed (%s), retrying in %ds...", e, wait)
                     time.sleep(wait)
+            except OpenAIError as e:
+                logger.error("LLM request failed (non-retryable): %s", e)
+                return MeetingSummary(
+                    title="Untitled Meeting",
+                    date="",
+                    duration_minutes=0,
+                    participants=[],
+                    key_topics=[],
+                    decisions=[],
+                    action_items=[],
+                    full_transcript=transcript if settings.mode != RunMode.SUMMARY_ONLY else "",
+                    summary=f"LLM summarization failed: {e}",
+                )
         else:
             logger.error("LLM request failed after %d attempts: %s", MAX_RETRIES, last_error)
             return MeetingSummary(

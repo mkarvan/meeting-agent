@@ -1,12 +1,17 @@
 """Audio capture using FFmpeg — supports PulseAudio (Linux) and AVFoundation (macOS)."""
 import asyncio
+import logging
 import platform
+import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
 from src.config import settings
+from src.errors import ffmpeg_not_found, audio_device_error
+
+logger = logging.getLogger(__name__)
 
 _IS_MACOS = platform.system() == "Darwin"
 
@@ -27,48 +32,56 @@ class AudioCapture:
 
     def start(self) -> None:
         """Start FFmpeg process capturing audio in 30s chunks."""
+        if not shutil.which("ffmpeg"):
+            raise ffmpeg_not_found()
+
         self.stopped = False
         output_pattern = str(self.chunk_dir / "chunk_%05d.wav")
 
         if _IS_MACOS:
-            # macOS: use AVFoundation (e.g. BlackHole virtual device)
             cmd = [
                 "ffmpeg",
                 "-f", "avfoundation",
-                "-i", self.monitor_source,   # e.g. ":0" or "BlackHole 2ch"
-                "-ac", "1",                   # mono
-                "-ar", str(settings.sample_rate),  # 16kHz for whisper
+                "-i", self.monitor_source,
+                "-ac", "1",
+                "-ar", str(settings.sample_rate),
                 "-f", "segment",
                 "-segment_time", str(settings.chunk_duration),
                 "-reset_timestamps", "1",
                 output_pattern,
             ]
-            # Apply volume boost via audio filter
             if settings.volume_boost_db != 0.0:
-                # Insert -af volume= before -ac
                 ac_idx = cmd.index("-ac")
                 cmd.insert(ac_idx, f"volume={settings.volume_boost_db}dB")
                 cmd.insert(ac_idx, "-af")
         else:
-            # Linux: use PulseAudio
             cmd = [
                 "ffmpeg",
                 "-f", "pulse",
                 "-i", self.monitor_source,
                 "-af", f"volume={settings.volume_boost_db}dB",
-                "-ac", "1",                   # mono
-                "-ar", str(settings.sample_rate),  # 16kHz for whisper
+                "-ac", "1",
+                "-ar", str(settings.sample_rate),
                 "-f", "segment",
                 "-segment_time", str(settings.chunk_duration),
                 "-reset_timestamps", "1",
                 output_pattern,
             ]
 
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as e:
+            raise audio_device_error(self.monitor_source, str(e)) from e
+
+        # Give FFmpeg a moment to fail on bad devices
+        time.sleep(1.5)
+        if self._process.poll() is not None:
+            stderr = self._process.stderr.read().decode(errors="replace") if self._process.stderr else ""
+            raise audio_device_error(self.monitor_source, stderr.strip().split("\n")[-1] if stderr else "")
 
     async def get_new_chunks(self) -> AsyncIterator[Path]:
         """Yield newly created WAV chunk files without blocking the event loop."""

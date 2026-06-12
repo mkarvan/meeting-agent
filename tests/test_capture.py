@@ -11,7 +11,9 @@ class TestAudioCapture:
 
     @pytest.fixture
     def capture(self):
-        with patch("src.audio.capture.subprocess") as mock_subprocess:
+        with patch("src.audio.capture.subprocess") as mock_subprocess, \
+             patch("src.audio.capture.time.sleep"):
+            mock_subprocess.Popen.return_value.poll.return_value = None
             instance = AudioCapture()
             instance._subprocess_mock = mock_subprocess
             instance.chunk_dir = Path("/tmp/test-chunks")

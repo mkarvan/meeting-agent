@@ -28,6 +28,7 @@ class MeetingAgent:
         self._chunk_count = 0
         self._transcript_lines: list[str] = []
         self._stop_requested = False
+        self._browser_mode = False
 
     # ── Browser-auto-join mode ───────────────────────────────────────────
 
@@ -43,6 +44,7 @@ class MeetingAgent:
         self.audio.start()
 
         # 2. Join meeting via browser
+        self._browser_mode = True
         await self.connector.start()
         await self.connector.join_meeting(meeting.platform.value, meeting_url, name)
 
@@ -149,14 +151,15 @@ class MeetingAgent:
         self.audio.stop()
         self.audio.cleanup_all()
 
-        try:
-            await self.connector.leave()
-        except Exception:
-            pass
-        try:
-            await self.connector.stop()
-        except Exception:
-            pass
+        if self._browser_mode:
+            try:
+                await self.connector.leave()
+            except Exception:
+                pass
+            try:
+                await self.connector.stop()
+            except Exception:
+                pass
 
         duration = int((time.time() - self._start_time) / 60) if self._start_time else 0
 

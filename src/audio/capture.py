@@ -84,24 +84,38 @@ class AudioCapture:
             raise audio_device_error(self.monitor_source, stderr.strip().split("\n")[-1] if stderr else "")
 
     async def get_new_chunks(self) -> AsyncIterator[Path]:
-        """Yield newly created WAV chunk files without blocking the event loop."""
+        """Yield completed WAV chunk files without blocking the event loop.
+
+        A chunk is only yielded once the *next* chunk exists, which proves
+        FFmpeg has finished writing the current one.  On stop, the last
+        partial chunk is yielded if it contains data.
+        """
         while not self.stopped:
             chunk_path = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
-            if chunk_path.exists():
+            next_chunk = self.chunk_dir / f"chunk_{self._current_chunk + 1:05d}.wav"
+            if next_chunk.exists():
                 self._current_chunk += 1
                 yield chunk_path
             else:
                 await asyncio.sleep(0.5)
+        # Yield the last chunk if it has data
+        last = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
+        if last.exists() and last.stat().st_size > 44:
+            yield last
 
     def get_new_chunks_sync(self) -> Iterator[Path]:
         """Synchronous variant for non-async callers."""
         while not self.stopped:
             chunk_path = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
-            if chunk_path.exists():
+            next_chunk = self.chunk_dir / f"chunk_{self._current_chunk + 1:05d}.wav"
+            if next_chunk.exists():
                 self._current_chunk += 1
                 yield chunk_path
             else:
                 time.sleep(0.5)
+        last = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
+        if last.exists() and last.stat().st_size > 44:
+            yield last
 
     def cleanup_chunk(self, chunk_path: Path) -> None:
         """Delete a WAV chunk after successful transcription."""

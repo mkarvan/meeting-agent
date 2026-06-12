@@ -79,14 +79,16 @@ class TestAudioCapture:
         segment_idx = indices[1] + 1
         assert cmd[segment_idx] == "segment"
 
-    def test_get_new_chunks_sync_waits_for_files(self, capture):
-        """get_new_chunks_sync should yield files as they appear."""
-        chunk_file = capture.chunk_dir / "chunk_00000.wav"
-        chunk_file.write_text("fake wav data")
+    def test_get_new_chunks_sync_waits_for_next(self, capture):
+        """get_new_chunks_sync yields a chunk only when the next chunk exists."""
+        chunk0 = capture.chunk_dir / "chunk_00000.wav"
+        chunk0.write_text("fake wav data")
+        chunk1 = capture.chunk_dir / "chunk_00001.wav"
+        chunk1.write_text("fake wav data")
 
         gen = capture.get_new_chunks_sync()
         first_chunk = next(gen)
-        assert first_chunk == chunk_file
+        assert first_chunk == chunk0
         assert capture._current_chunk == 1
 
     def test_get_new_chunks_sync_sequential(self, capture):
@@ -95,6 +97,8 @@ class TestAudioCapture:
         chunk0.write_text("chunk 0")
         chunk1 = capture.chunk_dir / "chunk_00001.wav"
         chunk1.write_text("chunk 1")
+        chunk2 = capture.chunk_dir / "chunk_00002.wav"
+        chunk2.write_text("chunk 2")
 
         gen = capture.get_new_chunks_sync()
         assert next(gen) == chunk0
@@ -104,9 +108,11 @@ class TestAudioCapture:
 
     @pytest.mark.asyncio
     async def test_get_new_chunks_async(self, capture):
-        """Async get_new_chunks should yield files without blocking."""
-        chunk_file = capture.chunk_dir / "chunk_00000.wav"
-        chunk_file.write_text("fake wav data")
+        """Async get_new_chunks should yield completed chunks."""
+        chunk0 = capture.chunk_dir / "chunk_00000.wav"
+        chunk0.write_text("fake wav data")
+        chunk1 = capture.chunk_dir / "chunk_00001.wav"
+        chunk1.write_text("fake wav data")
         capture.stopped = False
 
         chunks = []
@@ -114,8 +120,21 @@ class TestAudioCapture:
             chunks.append(path)
             capture.stopped = True  # stop after first
 
-        assert chunks == [chunk_file]
-        assert capture._current_chunk == 1
+        assert chunk0 in chunks
+        assert capture._current_chunk >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_new_chunks_yields_last_on_stop(self, capture):
+        """On stop, the last chunk with data should be yielded."""
+        chunk0 = capture.chunk_dir / "chunk_00000.wav"
+        chunk0.write_bytes(b'\x00' * 100)
+        capture.stopped = True
+
+        chunks = []
+        async for path in capture.get_new_chunks():
+            chunks.append(path)
+
+        assert chunks == [chunk0]
 
     def test_cleanup_chunk_deletes_file(self, capture):
         """cleanup_chunk should delete the WAV file."""

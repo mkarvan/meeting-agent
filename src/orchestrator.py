@@ -37,7 +37,7 @@ class MeetingAgent:
 
     # ── Browser-auto-join mode ───────────────────────────────────────────
 
-    async def run(self, meeting_url: str, bot_name: str | None = None):
+    async def run(self, meeting_url: str, bot_name: str | None = None, title: str = "Meeting"):
         """Join a meeting via browser and take notes (full-auto mode)."""
         name = bot_name or settings.bot_name
         meeting = parse_meeting_url(meeting_url)
@@ -59,7 +59,7 @@ class MeetingAgent:
         logger.info("Connected — capturing audio and transcribing")
         await self._capture_loop()
 
-        await self._finalize()
+        await self._finalize(meeting_title=title)
 
     # ── Audio-only mode (user joins manually) ────────────────────────────
 

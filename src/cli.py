@@ -52,6 +52,7 @@ def cli():
 @cli.command()
 @click.argument("url")
 @click.option("--name", "-n", default="Meeting Notes Bot", help="Bot display name")
+@click.option("--title", "-t", default="Meeting", help="Meeting title for saved notes")
 @click.option(
     "--mode", "-m",
     type=click.Choice(["full", "transcript_only", "summary_only"]),
@@ -67,14 +68,14 @@ def cli():
 @click.option("--model", type=str, default=None, help="LLM model name (e.g. gpt-4o, claude-sonnet-4-20250514)")
 @click.option("--device", "-d", type=str, default=None, help="Audio capture device (e.g. meeting-agent-sink.monitor, @DEFAULT_SINK@.monitor)")
 @click.option("--keep-audio", is_flag=True, help="Keep WAV audio chunks after transcription (debug only)")
-def join(url: str, name: str, mode: str, provider: str, model: str, device: str, keep_audio: bool):
+def join(url: str, name: str, title: str, mode: str, provider: str, model: str, device: str, keep_audio: bool):
     """Join a meeting via browser automation and take notes.
     NOTE: Google Meet actively blocks automated browsers.
     For Google Meet, use the 'listen' command instead and join manually."""
     _apply_settings(mode, provider, model, keep_audio, device)
     try:
         agent = MeetingAgent()
-        asyncio.run(agent.run(url, name))
+        asyncio.run(agent.run(url, name, title=title))
     except MeetingAgentError:
         raise
     except Exception as e:

@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.orchestrator import MeetingAgent
+from src.config import settings, RunMode
 
 
 async def _async_iter(items):
@@ -14,6 +15,13 @@ async def _async_iter(items):
 
 class TestMeetingAgent:
     """Tests for the MeetingAgent orchestrator with mocked dependencies."""
+
+    @pytest.fixture(autouse=True)
+    def reset_settings(self):
+        original_mode = settings.mode
+        settings.mode = RunMode.FULL
+        yield
+        settings.mode = original_mode
 
     @pytest.fixture
     def mock_audio(self):

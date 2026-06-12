@@ -24,7 +24,9 @@ class MeetingAgent:
     def __init__(self):
         self.audio = AudioCapture()
         self.transcriber = Transcriber()
-        self.summarizer = Summarizer()
+        self.summarizer: Summarizer | None = None
+        if settings.mode != RunMode.TRANSCRIPT_ONLY:
+            self.summarizer = Summarizer()
         self.connector = MeetingConnector()
         self._running = False
         self._start_time: float | None = None
@@ -117,7 +119,7 @@ class MeetingAgent:
                     self._transcript_lines.append(line)
                     logger.info(line)
 
-                if settings.mode != RunMode.TRANSCRIPT_ONLY:
+                if self.summarizer and settings.mode != RunMode.TRANSCRIPT_ONLY:
                     self.summarizer.add_segments(segments)
 
             self.audio.cleanup_chunk(chunk_path)
@@ -164,7 +166,7 @@ class MeetingAgent:
         logger.info("Audio chunks processed & deleted: %d", self._chunk_count)
 
         # Generate LLM summary if in full mode
-        if settings.mode != RunMode.TRANSCRIPT_ONLY and self._transcript_lines:
+        if self.summarizer and settings.mode != RunMode.TRANSCRIPT_ONLY and self._transcript_lines:
             summary = self.summarizer.generate_summary()
             summary.duration_minutes = duration
             summary.date = datetime.now().strftime("%Y-%m-%d")

@@ -43,13 +43,20 @@ class Summarizer:
     """Summarizes meeting transcripts using an LLM via the OpenAI-compatible API."""
 
     def __init__(self):
+        self._client: OpenAI | None = None
+        self._model: str | None = None
+        self._transcript_buffer: List[TranscriptionSegment] = []
+
+    def _ensure_client(self) -> None:
+        """Create the OpenAI client on first use — avoids crashing when no API key is set."""
+        if self._client is not None:
+            return
         llm_config = settings.get_llm_config()
         self._client = OpenAI(
             api_key=llm_config["api_key"],
             base_url=llm_config["base_url"],
         )
         self._model = llm_config["model"]
-        self._transcript_buffer: List[TranscriptionSegment] = []
 
     def add_segments(self, segments: List[TranscriptionSegment]) -> None:
         self._transcript_buffer.extend(segments)
@@ -79,6 +86,7 @@ class Summarizer:
                 summary="[Transcript-only mode — no LLM summary generated]",
             )
 
+        self._ensure_client()
         prompt = f"{SYSTEM_PROMPT}\n\n---\n\n{transcript}"
 
         last_error = None

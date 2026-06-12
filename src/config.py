@@ -115,9 +115,15 @@ class Settings(BaseSettings):
                 "model": self.llm_model or "gpt-4o",
             }
         elif self.llm_provider == LLMProvider.ANTHROPIC:
+            # Anthropic's native API is not OpenAI-compatible.
+            # To use Anthropic, point an OpenAI-compatible proxy (e.g. LiteLLM,
+            # openai-router) at https://api.anthropic.com and set --provider custom
+            # with the proxy's base URL, OR set OPENAI_API_KEY to an Anthropic
+            # key and use a proxy that handles the conversion.
+            base = self.custom_base_url or "https://api.anthropic.com/v1"
             return {
                 "api_key": self.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", ""),
-                "base_url": "https://api.anthropic.com/v1",
+                "base_url": base,
                 "model": self.llm_model or "claude-sonnet-4-20250514",
             }
         elif self.llm_provider == LLMProvider.OPENCODE_GO:

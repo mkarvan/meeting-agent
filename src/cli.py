@@ -179,7 +179,7 @@ def status():
     if _sys == "Darwin":
         if ffmpeg_path:
             r = subprocess.run(
-                ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", '""'],
+                ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
                 capture_output=True, text=True
             )
             has_blackhole = "BlackHole" in r.stderr

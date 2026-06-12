@@ -14,13 +14,13 @@ from src.orchestrator import MeetingAgent
 logger = logging.getLogger("meeting_agent")
 
 
-def _configure_logging():
+def _configure_logging(level: str = "INFO"):
     """Set up console logging with a clean format for CLI use."""
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
     root = logging.getLogger("src")
     root.addHandler(handler)
-    root.setLevel(logging.INFO)
+    root.setLevel(getattr(logging, level, logging.INFO))
 
 
 def _handle_error(e: Exception) -> None:
@@ -44,9 +44,10 @@ class SafeGroup(click.Group):
 
 
 @click.group(cls=SafeGroup)
-def cli():
+@click.option("--log-level", type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]), default="INFO", help="Set log verbosity")
+def cli(log_level: str):
     """Meeting Agent — AI-powered meeting notes."""
-    _configure_logging()
+    _configure_logging(log_level)
 
 
 @cli.command()

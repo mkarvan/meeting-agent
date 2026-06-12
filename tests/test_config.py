@@ -111,7 +111,7 @@ class TestSettingsDefaults:
         assert s.join_video_off is True
 
     def test_env_prefix(self):
-        assert Settings.model_config.get("env_prefix") == "MEETING_AGENT_"
+        assert Settings.model_config["env_prefix"] == "MEETING_AGENT_"
 
 
 # ── get_llm_config() ────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import platform
 from pathlib import Path
 from enum import Enum
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _IS_MACOS = platform.system() == "Darwin"
 
@@ -110,8 +110,7 @@ class Settings(BaseSettings):
             # Use object.__setattr__ to bypass pydantic validation
             object.__setattr__(self, 'notes_dir', (self.project_root / self.notes_dir).resolve())
 
-    class Config:
-        env_prefix = "MEETING_AGENT_"
+    model_config = SettingsConfigDict(env_prefix="MEETING_AGENT_")
 
 
 settings = Settings()

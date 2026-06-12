@@ -8,6 +8,7 @@ class MeetingConnector:
     """Connects to online meetings via browser automation."""
 
     def __init__(self):
+        self._playwright = None
         self.browser: Browser | None = None
         self.page: Page | None = None
 
@@ -15,8 +16,8 @@ class MeetingConnector:
         """Launch browser with anti-detection measures."""
         from playwright_stealth import Stealth
 
-        p = await async_playwright().start()
-        self.browser = await p.chromium.launch(
+        self._playwright = await async_playwright().start()
+        self.browser = await self._playwright.chromium.launch(
             headless=False,
             args=[
                 "--use-fake-device-for-media-stream",
@@ -107,8 +108,10 @@ class MeetingConnector:
             pass
 
     async def stop(self):
-        """Close browser."""
+        """Close browser and playwright instance."""
         if self.page:
             await self.page.close()
         if self.browser:
             await self.browser.close()
+        if self._playwright:
+            await self._playwright.stop()

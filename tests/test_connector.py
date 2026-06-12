@@ -20,7 +20,8 @@ class TestMeetingConnector:
         return connector
 
     def test_init(self, connector):
-        """New connector should have None browser and page."""
+        """New connector should have None browser, page, and playwright."""
+        assert connector._playwright is None
         assert connector.browser is None
         assert connector.page is None
 
@@ -100,16 +101,18 @@ class TestMeetingConnector:
         await connected_connector.leave()
 
     @pytest.mark.asyncio
-    async def test_stop_closes_page_and_browser(self, connected_connector):
-        """stop should close page and browser."""
+    async def test_stop_closes_page_browser_and_playwright(self, connected_connector):
+        """stop should close page, browser, and playwright instance."""
+        connected_connector._playwright = AsyncMock()
         await connected_connector.stop()
 
         connected_connector.page.close.assert_called_once()
         connected_connector.browser.close.assert_called_once()
+        connected_connector._playwright.stop.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stop_handles_none(self, connector):
-        """stop should not raise if browser/page is None."""
+        """stop should not raise if browser/page/playwright is None."""
         await connector.stop()
 
     @pytest.mark.asyncio

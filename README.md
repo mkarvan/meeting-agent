@@ -4,14 +4,14 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 
 ## Features
 
-- **🎙️ Join meetings automatically** — Google Meet, Zoom, Microsoft Teams via browser automation
-- **📝 Transcribe locally** — faster-whisper (large-v3-turbo) runs entirely on your machine; audio never leaves it
-- **🤖 LLM-powered summaries** — structured notes with key topics, decisions, and action items
-- **🔌 Multi-provider** — OpenAI, Anthropic, OpenCode Go, Ollama, or any OpenAI-compatible endpoint
-- **🔀 Three run modes** — full (summary + transcript), transcript-only (free, no LLM), summary-only (no transcript saved)
-- **🗑️ Privacy-first** — WAV audio chunks deleted immediately after transcription; only text is retained
-- **⚙️ Configurable** — CLI flags or environment variables for every setting
-- **🍎 Cross-platform** — Linux (PulseAudio) and macOS (BlackHole/AVFoundation)
+- **Join meetings automatically** — Google Meet, Zoom, Microsoft Teams via browser automation
+- **Transcribe locally** — faster-whisper (large-v3-turbo) runs entirely on your machine; audio never leaves it
+- **LLM-powered summaries** — structured notes with key topics, decisions, and action items
+- **Multi-provider** — OpenAI, Anthropic, OpenCode Go, Ollama, or any OpenAI-compatible endpoint
+- **Three run modes** — full (summary + transcript), transcript_only (free, no LLM), summary_only (no transcript saved)
+- **Privacy-first** — WAV audio chunks deleted immediately after transcription; only text is retained
+- **Configurable** — CLI flags or environment variables for every setting
+- **Cross-platform** — Linux (PulseAudio) and macOS (BlackHole/AVFoundation)
 
 ## Use Cases
 
@@ -24,19 +24,19 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 ## Architecture
 
 ```
-🎙️ Audio → PulseAudio/AVFoundation → FFmpeg (30s WAV chunks)
-                         ↓
-                  🎯 faster-whisper (local STT)
-                         ↓
-                  📝 Text transcript (in memory)
-                         ↓                          ┌──────────┐
-            ┌────────────┴────────────┐            │  OpenAI   │
-            │   transcript-only mode   │            │ Anthropic │
-            │     (no LLM, free)       │            │ OpenCode  │
-            └────────────┬────────────┘            │  Ollama   │
-                         │  (full / summary-only)  │  Custom   │
-                         ↓                         └──────────┘
-                  🤖 LLM → JSON → Markdown notes
+Audio -> PulseAudio/AVFoundation -> FFmpeg (30s WAV chunks)
+                     |
+              faster-whisper (local STT)
+                     |
+              Text transcript (in memory)
+                     |                          +----------+
+            +--------+--------+                 |  OpenAI  |
+            | transcript_only |                 | Anthropic|
+            |  (no LLM, free) |                 | OpenCode |
+            +--------+--------+                 |  Ollama  |
+                     |  (full / summary_only)   |  Custom  |
+                     v                          +----------+
+              LLM -> JSON -> Markdown notes
 ```
 
 ## Requirements
@@ -45,7 +45,7 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 - **Python:** 3.11+
 - **Disk:** ~4 GB for the Whisper model (downloaded on first run)
 - **Memory:** 4 GB+ recommended (Whisper large-v3-turbo)
-- **Network:** For LLM summarization (not needed for transcript-only mode)
+- **Network:** For LLM summarization (not needed for transcript_only mode)
 
 ## Installation
 
@@ -112,7 +112,7 @@ ffmpeg -f avfoundation -list_devices true -i ''
 
 ### 3. LLM API Key
 
-For summarization (not required for transcript-only mode):
+For summarization (not required for transcript_only mode):
 
 ```bash
 # OpenCode Go (default)
@@ -130,54 +130,88 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 ## Usage
 
-### Basic
+### Listen Mode (recommended)
+
+Capture audio from a meeting you join yourself. Works with any meeting platform since it captures system audio directly:
 
 ```bash
-# Full mode — join a meeting, transcribe, and generate notes
+# Transcript only — no LLM call, free, saves raw transcript
+uv run meeting-agent listen --title "Standup"
+
+# Full mode — transcript + LLM-generated summary
+uv run meeting-agent listen --title "Standup" --mode full
+
+# Summary only — LLM summary, no full transcript saved
+uv run meeting-agent listen --title "Standup" --mode summary_only --provider openai --model gpt-4o
+```
+
+### Join Mode (browser automation)
+
+Automatically join a meeting via browser and take notes:
+
+```bash
+# Full mode — join, transcribe, and generate notes
 uv run meeting-agent join "https://meet.google.com/abc-defg-hij"
 
 # Custom bot name
 uv run meeting-agent join "https://zoom.us/j/123456789" --name "Notes Bot"
 ```
 
+> **Note:** Google Meet actively blocks automated browsers. For Google Meet, use `listen` mode and join the meeting manually in your browser.
+
 ### Run Modes
 
 ```bash
 # Transcript only — no LLM call, free, saves raw transcript
-uv run meeting-agent join <url> --mode transcript-only
+uv run meeting-agent listen --title "Meeting" --mode transcript_only
+
+# Full — transcript + LLM summary with action items
+uv run meeting-agent listen --title "Meeting" --mode full
 
 # Summary only — LLM summary + action items, no full transcript saved
-uv run meeting-agent join <url> --mode summary-only
+uv run meeting-agent listen --title "Meeting" --mode summary_only
 ```
 
 ### LLM Provider
 
 ```bash
 # Use OpenAI
-uv run meeting-agent join <url> --provider openai --model gpt-4o
+uv run meeting-agent listen --title "Meeting" --mode full --provider openai --model gpt-4o
 
 # Use Anthropic Claude
-uv run meeting-agent join <url> --provider anthropic --model claude-sonnet-4-20250514
+uv run meeting-agent listen --title "Meeting" --mode full --provider anthropic --model claude-sonnet-4-20250514
 
 # Use local Ollama
-uv run meeting-agent join <url> --provider ollama --model llama3.1
+uv run meeting-agent listen --title "Meeting" --mode full --provider ollama --model llama3.1
 
 # Use a custom OpenAI-compatible endpoint
 export CUSTOM_API_KEY="your-key"
 export CUSTOM_BASE_URL="http://localhost:8080/v1"
-uv run meeting-agent join <url> --provider custom --model my-model
+uv run meeting-agent listen --title "Meeting" --mode full --provider custom --model my-model
+```
+
+### Status Check
+
+```bash
+# Check that all dependencies are installed and configured
+uv run meeting-agent status
 ```
 
 ### Debugging
 
 ```bash
 # Keep WAV audio files after transcription (for debugging)
-uv run meeting-agent join <url> --keep-audio
+uv run meeting-agent listen --title "Debug" --keep-audio
 ```
 
 ### Output
 
-Meeting notes are saved to `notes/YYYY-MM-DD_HHMM_Title.md` with this structure:
+Meeting notes are saved to `notes/` with this structure:
+
+- **Transcript:** `notes/{Title}_{YYYY-MM-DD_HHMM}_transcript.md` (always saved)
+- **Summary:** `notes/{YYYY-MM-DD_HHMM}_{Title}.md` (when using `full` or `summary_only` mode)
+
+Summary files follow this format:
 
 ```markdown
 # Project Roadmap Review
@@ -212,7 +246,7 @@ All settings can be set via environment variables (prefixed with `MEETING_AGENT_
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEETING_AGENT_MODE` | `full` | Run mode: full, transcript_only, summary_only |
+| `MEETING_AGENT_MODE` | `full` | Run mode: `full`, `transcript_only`, `summary_only` |
 | `MEETING_AGENT_LLM_PROVIDER` | `opencode-go` | LLM provider |
 | `MEETING_AGENT_LLM_MODEL` | `deepseek-v4-pro` | Model name |
 | `MEETING_AGENT_LLM_TEMPERATURE` | `0.3` | LLM temperature |
@@ -228,11 +262,12 @@ All settings can be set via environment variables (prefixed with `MEETING_AGENT_
 - **Audio:** WAV chunks stored in `/tmp/meeting-agent-audio/`, deleted immediately after transcription. Never persisted to disk beyond a few seconds.
 - **Text:** Transcript and notes saved to `notes/` directory. Delete manually when no longer needed.
 - **LLM:** Only transcribed text (never audio) is sent to the LLM provider. Provider data policies apply.
-- **Local mode:** Use `--mode transcript-only` to keep everything on your machine with zero API calls.
+- **Local mode:** Use `--mode transcript_only` to keep everything on your machine with zero API calls.
 
 ## Limitations
 
 - **Platform UI changes** — Google Meet, Zoom, and Teams change their DOM frequently. Join flows may need updates.
+- **Google Meet bot detection** — Google Meet actively blocks automated browsers. Use `listen` mode instead.
 - **macOS audio routing** — On macOS, you need BlackHole + Multi-Output Device to capture system audio while hearing it. Use `scripts/setup-audio-macos.sh`.
 - **Linux audio routing** — On Linux, you must route browser audio into the virtual sink (use `pavucontrol`), or use `--device @DEFAULT_SINK@.monitor` to capture directly from speakers/headphones.
 - **Speaker diarization** — Does not identify "who said what" (planned for v0.2).

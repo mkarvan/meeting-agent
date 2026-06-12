@@ -162,7 +162,12 @@ def _build_settings() -> Settings:
         return Settings()
     except Exception as e:
         import sys
-        print(f"Warning: invalid configuration: {e}", file=sys.stderr)
+        # Preserve Pydantic ValidationError details which list exact field names
+        err_class = e.__class__.__name__
+        if err_class == "ValidationError":
+            print(f"Warning: invalid configuration — {e}", file=sys.stderr)
+        else:
+            print(f"Warning: invalid configuration: {e}", file=sys.stderr)
         print("Falling back to defaults.", file=sys.stderr)
         return Settings()
 

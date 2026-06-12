@@ -22,7 +22,6 @@ class MeetingConnector:
             args=[
                 "--use-fake-device-for-media-stream",
                 "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
                 "--disable-features=IsolateOrigins,site-per-process",
             ],
         )

@@ -77,30 +77,43 @@ class TestAudioCapture:
         segment_idx = indices[1] + 1
         assert cmd[segment_idx] == "segment"
 
-    def test_get_new_chunks_waits_for_files(self, capture):
-        """get_new_chunks should yield files as they appear."""
-        # Create a test chunk file
+    def test_get_new_chunks_sync_waits_for_files(self, capture):
+        """get_new_chunks_sync should yield files as they appear."""
         chunk_file = capture.chunk_dir / "chunk_00000.wav"
         chunk_file.write_text("fake wav data")
 
-        # Stop after first chunk by breaking the loop manually
-        gen = capture.get_new_chunks()
+        gen = capture.get_new_chunks_sync()
         first_chunk = next(gen)
         assert first_chunk == chunk_file
         assert capture._current_chunk == 1
 
-    def test_get_new_chunks_sequential(self, capture):
+    def test_get_new_chunks_sync_sequential(self, capture):
         """Multiple chunks should be yielded in order."""
         chunk0 = capture.chunk_dir / "chunk_00000.wav"
         chunk0.write_text("chunk 0")
         chunk1 = capture.chunk_dir / "chunk_00001.wav"
         chunk1.write_text("chunk 1")
 
-        gen = capture.get_new_chunks()
+        gen = capture.get_new_chunks_sync()
         assert next(gen) == chunk0
         assert capture._current_chunk == 1
         assert next(gen) == chunk1
         assert capture._current_chunk == 2
+
+    @pytest.mark.asyncio
+    async def test_get_new_chunks_async(self, capture):
+        """Async get_new_chunks should yield files without blocking."""
+        chunk_file = capture.chunk_dir / "chunk_00000.wav"
+        chunk_file.write_text("fake wav data")
+        capture.stopped = False
+
+        chunks = []
+        async for path in capture.get_new_chunks():
+            chunks.append(path)
+            capture.stopped = True  # stop after first
+
+        assert chunks == [chunk_file]
+        assert capture._current_chunk == 1
 
     def test_cleanup_chunk_deletes_file(self, capture):
         """cleanup_chunk should delete the WAV file."""

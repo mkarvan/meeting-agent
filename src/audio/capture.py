@@ -1,9 +1,10 @@
 """Audio capture using FFmpeg — supports PulseAudio (Linux) and AVFoundation (macOS)."""
+import asyncio
 import platform
 import subprocess
 import time
 from pathlib import Path
-from typing import Iterator
+from typing import AsyncIterator, Iterator
 
 from src.config import settings
 
@@ -69,8 +70,18 @@ class AudioCapture:
             stderr=subprocess.DEVNULL,
         )
 
-    def get_new_chunks(self) -> Iterator[Path]:
-        """Yield newly created WAV chunk files. Check `self.stopped` to exit."""
+    async def get_new_chunks(self) -> AsyncIterator[Path]:
+        """Yield newly created WAV chunk files without blocking the event loop."""
+        while not self.stopped:
+            chunk_path = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
+            if chunk_path.exists():
+                self._current_chunk += 1
+                yield chunk_path
+            else:
+                await asyncio.sleep(0.5)
+
+    def get_new_chunks_sync(self) -> Iterator[Path]:
+        """Synchronous variant for non-async callers."""
         while not self.stopped:
             chunk_path = self.chunk_dir / f"chunk_{self._current_chunk:05d}.wav"
             if chunk_path.exists():

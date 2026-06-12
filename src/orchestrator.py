@@ -122,7 +122,7 @@ class MeetingAgent:
         self._setup_signal_handlers()
         loop = asyncio.get_running_loop()
 
-        for chunk_path in self.audio.get_new_chunks():
+        async for chunk_path in self.audio.get_new_chunks():
             if self._stop_requested or not self._running:
                 break
 

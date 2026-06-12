@@ -7,6 +7,11 @@ from pathlib import Path
 from src.orchestrator import MeetingAgent
 
 
+async def _async_iter(items):
+    for item in items:
+        yield item
+
+
 class TestMeetingAgent:
     """Tests for the MeetingAgent orchestrator with mocked dependencies."""
 
@@ -15,7 +20,7 @@ class TestMeetingAgent:
         with patch("src.orchestrator.AudioCapture") as mock:
             instance = mock.return_value
             instance.monitor_source = "test-sink.monitor"
-            instance.get_new_chunks.return_value = iter([])  # empty, exits loop
+            instance.get_new_chunks.return_value = _async_iter([])
             yield mock
 
     @pytest.fixture
@@ -174,7 +179,7 @@ class TestMeetingAgent:
             MagicMock(start=0.0, end=1.0, text="hello")
         ]
 
-        mock_audio.return_value.get_new_chunks.return_value = iter([chunk1, chunk2])
+        mock_audio.return_value.get_new_chunks.return_value = _async_iter([chunk1, chunk2])
 
         agent = MeetingAgent()
         await agent.run("https://meet.google.com/abc-defg-hij")
@@ -185,10 +190,8 @@ class TestMeetingAgent:
         # Both chunks should be cleaned up
         assert mock_audio.return_value.cleanup_chunk.call_count == 2
 
-    @pytest.mark.asyncio
-    async def test_format_timestamp(self):
+    def test_format_timestamp(self):
         """Timestamp formatting should produce correct strings."""
-        agent = MeetingAgent()
-        assert agent._format_timestamp(0) == "0:00"
-        assert agent._format_timestamp(65) == "1:05"
-        assert agent._format_timestamp(3661) == "1:01:01"
+        assert MeetingAgent._format_timestamp(0) == "0:00"
+        assert MeetingAgent._format_timestamp(65) == "1:05"
+        assert MeetingAgent._format_timestamp(3661) == "1:01:01"

@@ -92,9 +92,15 @@ class MeetingConnector:
             "teams": self.join_teams,
         }
         method = join_methods.get(platform)
-        if not method:
-            raise ValueError(f"Unsupported platform: {platform}")
-        await method(url, bot_name)
+        if method:
+            await method(url, bot_name)
+        elif platform == "webex":
+            raise BrowserError(
+                "Webex meetings are not yet supported for auto-join. "
+                "Use 'meeting-agent listen' instead and join manually."
+            )
+        else:
+            raise BrowserError(f"Unsupported meeting platform: {platform}")
 
     async def wait_for_meeting_end(self, timeout_minutes: int = 120):
         """Wait until meeting ends or timeout."""

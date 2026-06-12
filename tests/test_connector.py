@@ -3,6 +3,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 
 from src.meeting.connector import MeetingConnector
+from src.errors import BrowserError
 
 
 class TestMeetingConnector:
@@ -83,8 +84,8 @@ class TestMeetingConnector:
 
     @pytest.mark.asyncio
     async def test_join_meeting_unsupported_raises(self, connected_connector):
-        """join_meeting with unknown platform should raise ValueError."""
-        with pytest.raises(ValueError, match="Unsupported platform"):
+        """join_meeting with unknown platform should raise BrowserError."""
+        with pytest.raises(BrowserError, match="[Uu]nsupported"):
             await connected_connector.join_meeting("unknown", "http://example.com", "Bot")
 
     @pytest.mark.asyncio

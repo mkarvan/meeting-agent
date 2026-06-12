@@ -1,6 +1,7 @@
 """Browser-based meeting connector using Playwright."""
 import asyncio
 import logging
+import platform
 import time
 from playwright.async_api import async_playwright, Browser, Page
 
@@ -36,9 +37,15 @@ class MeetingConnector:
             if "executable doesn't exist" in err_msg or "browsertype.launch" in err_msg:
                 raise chromium_not_found() from e
             raise BrowserError(f"Failed to launch browser: {e}") from e
+        _sys = platform.system()
+        _ua_platform = "Macintosh; Intel Mac OS X" if _sys == "Darwin" else "X11; Linux x86_64"
+        user_agent = (
+            f"Mozilla/5.0 ({_ua_platform}) AppleWebKit/537.36 (KHTML, like Gecko)"
+            " Chrome/148.0.0.0 Safari/537.36"
+        )
         context = await self.browser.new_context(
             viewport={"width": 1280, "height": 720},
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+            user_agent=user_agent,
         )
         self.page = await context.new_page()
         await Stealth().apply_stealth_async(self.page)

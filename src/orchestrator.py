@@ -1,5 +1,6 @@
 """Main orchestrator — ties together audio capture, transcription, summarization, and cleanup."""
 import asyncio
+import logging
 import platform
 import signal
 import time
@@ -13,6 +14,8 @@ from src.notes.summarizer import Summarizer
 from src.notes.formatter import save_notes
 from src.meeting.connector import MeetingConnector
 from src.meeting.parser import parse_meeting_url
+
+logger = logging.getLogger(__name__)
 
 
 class MeetingAgent:
@@ -37,8 +40,8 @@ class MeetingAgent:
         name = bot_name or settings.bot_name
         meeting = parse_meeting_url(meeting_url)
 
-        print(f"🎙️  Joining {meeting.platform.value} meeting as '{name}'...")
-        print(f"📋  Mode: {settings.mode.value} | LLM: {settings.llm_provider.value}/{settings.llm_model}")
+        logger.info("Joining %s meeting as '%s'", meeting.platform.value, name)
+        logger.info("Mode: %s | LLM: %s/%s", settings.mode.value, settings.llm_provider.value, settings.llm_model)
 
         # 1. Start audio capture
         self.audio.start()
@@ -51,7 +54,7 @@ class MeetingAgent:
         self._start_time = time.time()
         self._running = True
 
-        print("✅ Connected. Capturing audio and transcribing...")
+        logger.info("Connected — capturing audio and transcribing")
         await self._capture_loop()
 
         await self._finalize()
@@ -59,50 +62,27 @@ class MeetingAgent:
     # ── Audio-only mode (user joins manually) ────────────────────────────
 
     async def listen(self, meeting_title: str = "Meeting"):
-        """Capture & transcribe audio only — user joins the meeting manually.
-
-        The user must:
-        Linux:
-          1. Join the meeting in their own browser/app
-          2. Route browser audio to the meeting-agent-sink via pavucontrol
-          3. Press Ctrl+C here when the meeting ends
-        macOS:
-          1. Set system output to Multi-Output Device (BlackHole + speakers)
-          2. Join the meeting in their own browser/app
-          3. Press Ctrl+C here when the meeting ends
-        """
+        """Capture & transcribe audio only — user joins the meeting manually."""
         _sys = platform.system()
 
-        print("🎙️  Meeting Agent — audio-only mode", flush=True)
-        print(f"📋  Mode: {settings.mode.value}", flush=True)
-        print(f"🎤  Device: {settings.audio_device}", flush=True)
-        print(flush=True)
+        logger.info("Meeting Agent — audio-only mode")
+        logger.info("Mode: %s", settings.mode.value)
+        logger.info("Device: %s", settings.audio_device)
 
         if _sys == "Darwin":
-            print("   ╔══════════════════════════════════════════════╗", flush=True)
-            print("   ║  macOS SETUP                                 ║", flush=True)
-            print("   ║                                              ║", flush=True)
-            print("   ║  1. Install BlackHole:                       ║", flush=True)
-            print("   ║     brew install blackhole-2ch               ║", flush=True)
-            print("   ║  2. Create Multi-Output Device               ║", flush=True)
-            print("   ║     (Audio MIDI Setup → + → Multi-Output)     ║", flush=True)
-            print("   ║  3. Set system output to Multi-Output        ║", flush=True)
-            print("   ║  4. Join meeting in your browser             ║", flush=True)
-            print("   ║  5. Press Ctrl+C when the meeting ends       ║", flush=True)
-            print("   ╚══════════════════════════════════════════════╝", flush=True)
+            logger.info(
+                "macOS setup: install BlackHole (brew install blackhole-2ch), "
+                "create Multi-Output Device in Audio MIDI Setup, "
+                "set system output to Multi-Output, join meeting, then Ctrl+C to stop"
+            )
         else:
-            print("   ╔══════════════════════════════════════════════╗", flush=True)
-            print("   ║  LINUX SETUP                                 ║", flush=True)
-            print("   ║                                              ║", flush=True)
-            print("   ║  1. Join the meeting in your browser         ║", flush=True)
-            print("   ║  2. Open pavucontrol                         ║", flush=True)
-            print("   ║  3. Playback tab → browser → output →       ║", flush=True)
-            print(f"   ║     '{settings.audio_device}'                ║", flush=True)
-            print("   ║  4. Press Ctrl+C when the meeting ends       ║", flush=True)
-            print("   ╚══════════════════════════════════════════════╝", flush=True)
+            logger.info(
+                "Linux setup: join meeting in browser, open pavucontrol, "
+                "route browser audio to '%s', then Ctrl+C to stop",
+                settings.audio_device,
+            )
 
-        print(flush=True)
-        print("Waiting for audio... (stop with Ctrl+C)", flush=True)
+        logger.info("Waiting for audio... (stop with Ctrl+C)")
 
         self._start_time = time.time()
         self._running = True
@@ -111,7 +91,7 @@ class MeetingAgent:
         try:
             await self._capture_loop()
         except KeyboardInterrupt:
-            print("\n🛑 Stopping...")
+            logger.info("Stopping...")
         finally:
             await self._finalize(meeting_title)
 
@@ -126,7 +106,6 @@ class MeetingAgent:
             if self._stop_requested or not self._running:
                 break
 
-            # Transcribe (runs sync, offload to thread so event loop stays responsive)
             segments = await loop.run_in_executor(
                 None, self.transcriber.transcribe, chunk_path
             )
@@ -136,7 +115,7 @@ class MeetingAgent:
                     ts = self._format_timestamp(seg.start)
                     line = f"[{ts}] {seg.text}"
                     self._transcript_lines.append(line)
-                    print(line, flush=True)
+                    logger.info(line)
 
                 if settings.mode != RunMode.TRANSCRIPT_ONLY:
                     self.summarizer.add_segments(segments)
@@ -147,7 +126,7 @@ class MeetingAgent:
     async def _finalize(self, meeting_title: str = "Meeting"):
         """Stop capture, generate notes, clean up."""
         self._running = False
-        self.audio.stopped = True  # stop the chunk generator
+        self.audio.stopped = True
         self.audio.stop()
         self.audio.cleanup_all()
 
@@ -179,10 +158,10 @@ class MeetingAgent:
         settings.notes_dir.mkdir(parents=True, exist_ok=True)
         transcript_path.write_text(transcript_md)
 
-        print(f"\n📝 Transcript saved to: {transcript_path}")
-        print(f"⏱️  Duration: {duration} min")
-        print(f"💬 Lines transcribed: {len(self._transcript_lines)}")
-        print(f"🗑️  Audio chunks processed & deleted: {self._chunk_count}")
+        logger.info("Transcript saved to: %s", transcript_path)
+        logger.info("Duration: %d min", duration)
+        logger.info("Lines transcribed: %d", len(self._transcript_lines))
+        logger.info("Audio chunks processed & deleted: %d", self._chunk_count)
 
         # Generate LLM summary if in full mode
         if settings.mode != RunMode.TRANSCRIPT_ONLY and self._transcript_lines:
@@ -190,7 +169,7 @@ class MeetingAgent:
             summary.duration_minutes = duration
             summary.date = datetime.now().strftime("%Y-%m-%d")
             summary_path = save_notes(summary)
-            print(f"🤖 Summary saved to: {summary_path}")
+            logger.info("Summary saved to: %s", summary_path)
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -199,7 +178,7 @@ class MeetingAgent:
         def _handler(signum, frame):
             self.audio.stopped = True
             self._stop_requested = True
-            print("\n🛑 Stop signal received, finishing current chunk...", flush=True)
+            logger.info("Stop signal received, finishing current chunk...")
         signal.signal(signal.SIGINT, _handler)
         signal.signal(signal.SIGTERM, _handler)
 

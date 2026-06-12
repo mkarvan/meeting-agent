@@ -1,5 +1,6 @@
 """LLM-powered meeting summarizer — turns transcripts into structured notes."""
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import List
@@ -7,6 +8,8 @@ from typing import List
 from openai import OpenAI, APITimeoutError, APIConnectionError, RateLimitError
 from src.audio.transcriber import TranscriptionSegment
 from src.config import settings, RunMode
+
+logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = [2, 5, 10]
@@ -94,10 +97,10 @@ class Summarizer:
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
                     wait = RETRY_BACKOFF[attempt]
-                    print(f"LLM request failed ({e}), retrying in {wait}s...")
+                    logger.warning("LLM request failed (%s), retrying in %ds...", e, wait)
                     time.sleep(wait)
         else:
-            print(f"LLM request failed after {MAX_RETRIES} attempts: {last_error}")
+            logger.error("LLM request failed after %d attempts: %s", MAX_RETRIES, last_error)
             return MeetingSummary(
                 title="Untitled Meeting",
                 date="",

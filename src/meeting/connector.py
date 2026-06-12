@@ -1,7 +1,10 @@
 """Browser-based meeting connector using Playwright."""
 import asyncio
+import logging
 import time
 from playwright.async_api import async_playwright, Browser, Page
+
+logger = logging.getLogger(__name__)
 
 
 class MeetingConnector:
@@ -43,14 +46,13 @@ class MeetingConnector:
             await self.page.click('button[aria-label="Turn off microphone"]')
             await self.page.click('button:has-text("Ask to join")')
         except Exception as e:
-            print(f"Google Meet join flow: {e}")
-            # Fallback: try to find name input with broader selector
+            logger.warning("Google Meet join flow failed: %s", e)
             try:
                 await self.page.wait_for_selector('input[aria-label*="Your name"], input[placeholder*="name"]', timeout=10000)
                 await self.page.fill('input[aria-label*="Your name"], input[placeholder*="name"]', bot_name)
                 await self.page.click('button:has-text("Ask to join"), button:has-text("Join")')
             except Exception as e2:
-                print(f"Google Meet join fallback also failed: {e2}")
+                logger.error("Google Meet join fallback also failed: %s", e2)
 
     async def join_zoom(self, meeting_url: str, bot_name: str = "Meeting Notes Bot"):
         """Join a Zoom meeting via web client."""
@@ -61,7 +63,7 @@ class MeetingConnector:
             await self.page.fill('#input_for_name', bot_name)
             await self.page.click('#joinBtn')
         except Exception as e:
-            print(f"Zoom join flow: {e}")
+            logger.warning("Zoom join flow failed: %s", e)
 
     async def join_teams(self, meeting_url: str, bot_name: str = "Meeting Notes Bot"):
         """Join a Microsoft Teams meeting via web."""
@@ -72,7 +74,7 @@ class MeetingConnector:
             await self.page.fill('input[placeholder="Type your name"]', bot_name)
             await self.page.click('button:has-text("Join now")')
         except Exception as e:
-            print(f"Teams join flow: {e}")
+            logger.warning("Teams join flow failed: %s", e)
 
     async def join_meeting(self, platform: str, url: str, bot_name: str = "Meeting Notes Bot"):
         """Join a meeting on any supported platform."""

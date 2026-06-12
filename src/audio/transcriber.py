@@ -1,4 +1,5 @@
 """Speech-to-text using faster-whisper."""
+import logging
 import wave
 import os
 from pathlib import Path
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 
 from faster_whisper import WhisperModel
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,7 +72,7 @@ class Transcriber:
             )
         except Exception as e:
             # Invalid data, corrupted audio, etc.
-            print(f"Transcriber error on {audio_path.name}: {e}")
+            logger.error("Transcriber error on %s: %s", audio_path.name, e)
             return []
 
         results = []

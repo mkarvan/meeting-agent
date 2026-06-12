@@ -1,23 +1,31 @@
 """Command-line interface for the meeting agent."""
 import asyncio
+import logging
 import os
 import platform
 import sys
 from pathlib import Path
 
-# Force unbuffered output so real-time transcript lines appear immediately
-sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
-os.environ.setdefault("PYTHONUNBUFFERED", "1")
-
 import click
 from src.config import settings, RunMode, LLMProvider
 from src.orchestrator import MeetingAgent
+
+logger = logging.getLogger("meeting_agent")
+
+
+def _configure_logging():
+    """Set up console logging with a clean format for CLI use."""
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    root = logging.getLogger("src")
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
 
 @click.group()
 def cli():
     """Meeting Agent — AI-powered meeting notes."""
-    pass
+    _configure_logging()
 
 
 @cli.command()
@@ -89,7 +97,7 @@ def listen(title: str, mode: str, provider: str, model: str, device: str, keep_a
     try:
         asyncio.run(agent.listen(title))
     except KeyboardInterrupt:
-        print("\n👋 Stopped by user.")
+        logger.info("Stopped by user.")
 
 
 @cli.command()
@@ -102,17 +110,17 @@ def setup():
     import subprocess
 
     if platform.system() == "Darwin":
-        print("🍎 macOS audio setup")
-        print()
-        print("1. Install BlackHole virtual audio driver:")
-        print("   brew install blackhole-2ch")
-        print()
-        print("2. Open Audio MIDI Setup (Applications > Utilities)")
-        print("3. Click '+' → 'Create Multi-Output Device'")
-        print("4. Check both 'BlackHole 2ch' AND your speakers/headphones")
-        print("5. Right-click the Multi-Output Device → 'Use This Device For Sound Output'")
-        print()
-        print("Then run:  meeting-agent listen --device ':0' --title 'Meeting'")
+        click.echo("macOS audio setup")
+        click.echo()
+        click.echo("1. Install BlackHole virtual audio driver:")
+        click.echo("   brew install blackhole-2ch")
+        click.echo()
+        click.echo("2. Open Audio MIDI Setup (Applications > Utilities)")
+        click.echo("3. Click '+' -> 'Create Multi-Output Device'")
+        click.echo("4. Check both 'BlackHole 2ch' AND your speakers/headphones")
+        click.echo("5. Right-click the Multi-Output Device -> 'Use This Device For Sound Output'")
+        click.echo()
+        click.echo("Then run:  meeting-agent listen --device ':0' --title 'Meeting'")
         return
 
     # Linux: run the PulseAudio setup script
@@ -120,8 +128,8 @@ def setup():
     if script.exists():
         subprocess.run(["bash", str(script)])
     else:
-        print(f"Setup script not found: {script}")
-        print("Run manually: bash scripts/setup-audio-sink.sh")
+        click.echo(f"Setup script not found: {script}", err=True)
+        click.echo("Run manually: bash scripts/setup-audio-sink.sh")
 
 
 @cli.command()
@@ -130,11 +138,12 @@ def status():
     import subprocess
 
     _sys = platform.system()
-    print(f"🔍 Meeting Agent Status Check ({_sys})\n")
+    click.echo(f"Meeting Agent Status Check ({_sys})\n")
 
     # Check ffmpeg
     r = subprocess.run(["which", "ffmpeg"], capture_output=True)
-    print(f"{'✅' if r.returncode == 0 else '❌'} ffmpeg: {r.stdout.decode().strip() or 'not found'}")
+    ok = r.returncode == 0
+    click.echo(f"{'[ok]' if ok else '[missing]'} ffmpeg: {r.stdout.decode().strip() or 'not found'}")
 
     if _sys == "Darwin":
         # macOS: check BlackHole
@@ -143,12 +152,12 @@ def status():
             capture_output=True, text=True
         )
         has_blackhole = "BlackHole" in r.stderr
-        print(f"{'✅' if has_blackhole else '❌'} BlackHole: {'found' if has_blackhole else 'missing — run: brew install blackhole-2ch'}")
+        click.echo(f"{'[ok]' if has_blackhole else '[missing]'} BlackHole: {'found' if has_blackhole else 'missing — run: brew install blackhole-2ch'}")
     else:
         # Linux: check pulseaudio sink
         r = subprocess.run(["pactl", "list", "sources", "short"], capture_output=True, text=True)
         has_sink = "meeting-agent-sink" in r.stdout
-        print(f"{'✅' if has_sink else '❌'} Audio sink 'meeting-agent-sink': {'present' if has_sink else 'missing — run: meeting-agent setup'}")
+        click.echo(f"{'[ok]' if has_sink else '[missing]'} Audio sink 'meeting-agent-sink': {'present' if has_sink else 'missing — run: meeting-agent setup'}")
 
     # Check whisper model
     wm = Path.home() / ".cache" / "huggingface" / "hub"
@@ -157,7 +166,7 @@ def status():
         for p in wm.rglob("model.bin"):
             has_model = True
             break
-    print(f"{'✅' if has_model else '❌'} faster-whisper model: {'cached' if has_model else 'missing — will download on first use'}")
+    click.echo(f"{'[ok]' if has_model else '[missing]'} faster-whisper model: {'cached' if has_model else 'missing — will download on first use'}")
 
     # Check chromium (any installed version)
     if _sys == "Darwin":
@@ -165,17 +174,17 @@ def status():
     else:
         pw_dir = Path.home() / ".cache" / "ms-playwright"
     has_chromium = any(pw_dir.glob("chromium-*")) if pw_dir.exists() else False
-    print(f"{'✅' if has_chromium else '❌'} Playwright Chromium: {'installed' if has_chromium else 'missing — run: playwright install chromium'}")
+    click.echo(f"{'[ok]' if has_chromium else '[missing]'} Playwright Chromium: {'installed' if has_chromium else 'missing — run: playwright install chromium'}")
 
     # Check notes dir
     nd = settings.notes_dir
-    print(f"{'✅' if nd.exists() else 'ℹ️'} Notes directory: {nd}")
+    click.echo(f"{'[ok]' if nd.exists() else '[info]'} Notes directory: {nd}")
 
     # Show configured audio device
-    print(f"🎤 Audio device: {settings.audio_device}")
-    print(f"🔊 Volume boost: {settings.volume_boost_db} dB")
+    click.echo(f"Audio device: {settings.audio_device}")
+    click.echo(f"Volume boost: {settings.volume_boost_db} dB")
 
-    print(f"\n💡 Quick start:  meeting-agent listen --title 'Standup'")
+    click.echo(f"\nQuick start:  meeting-agent listen --title 'Standup'")
 
 
 def _apply_settings(mode: str, provider: str, model: str | None, keep_audio: bool, device: str | None = None):

@@ -159,11 +159,13 @@ def status():
             break
     print(f"{'✅' if has_model else '❌'} faster-whisper model: {'cached' if has_model else 'missing — will download on first use'}")
 
-    # Check chromium
-    cr = Path.home() / ".cache" / "ms-playwright" / "chromium-1223" / "chrome-linux64" / "chrome"
+    # Check chromium (any installed version)
     if _sys == "Darwin":
-        cr = Path.home() / "Library" / "Caches" / "ms-playwright" / "chromium-1223" / "chrome-mac" / "Chromium.app"
-    print(f"{'✅' if cr.exists() else '❌'} Playwright Chromium: {'installed' if cr.exists() else 'missing'}")
+        pw_dir = Path.home() / "Library" / "Caches" / "ms-playwright"
+    else:
+        pw_dir = Path.home() / ".cache" / "ms-playwright"
+    has_chromium = any(pw_dir.glob("chromium-*")) if pw_dir.exists() else False
+    print(f"{'✅' if has_chromium else '❌'} Playwright Chromium: {'installed' if has_chromium else 'missing — run: playwright install chromium'}")
 
     # Check notes dir
     nd = settings.notes_dir

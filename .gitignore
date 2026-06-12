@@ -71,7 +71,7 @@ Desktop.ini
 # ==============================================
 # Project-specific
 # ==============================================
-notes/
+/notes/
 audio_chunks/
 /tmp/meeting-agent-audio/
 *.wav

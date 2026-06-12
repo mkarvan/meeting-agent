@@ -10,7 +10,7 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 - **Multi-provider** — OpenAI, Anthropic, OpenCode Go, Ollama, or any OpenAI-compatible endpoint
 - **Three run modes** — full (summary + transcript), transcript_only (free, no LLM), summary_only (no transcript saved)
 - **Privacy-first** — WAV audio chunks deleted immediately after transcription; only text is retained
-- **Configurable** — CLI flags or environment variables for every setting
+- **Configurable** — CLI flags, environment variables, or TOML config file for every setting
 - **Cross-platform** — Linux (PulseAudio) and macOS (BlackHole/AVFoundation)
 
 ## Use Cases
@@ -83,8 +83,11 @@ This creates a virtual sink named `meeting-agent-sink`. Use `pavucontrol` to rou
 Install BlackHole and create a Multi-Output Device:
 
 ```bash
+# Option 1: Show setup instructions
 uv run meeting-agent setup
-# Or: bash scripts/setup-audio-macos.sh
+
+# Option 2: Auto-install BlackHole via Homebrew + show instructions
+bash scripts/setup-audio-macos.sh
 ```
 
 Then open **Audio MIDI Setup**, create a Multi-Output Device with both BlackHole 2ch and your speakers/headphones, and set it as your output.

@@ -135,7 +135,7 @@ class Settings(BaseSettings):
         elif self.llm_provider == LLMProvider.CUSTOM:
             return {
                 "api_key": self.custom_api_key or os.environ.get("CUSTOM_API_KEY", ""),
-                "base_url": self.custom_base_url or "http://localhost:8080/v1",
+                "base_url": self.custom_base_url or os.environ.get("CUSTOM_BASE_URL", "http://localhost:8080/v1"),
                 "model": self.llm_model or "local-model",
             }
         # Fallback

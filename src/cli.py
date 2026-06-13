@@ -70,7 +70,8 @@ def cli(log_level: str):
 @click.option("--device", "-d", type=str, default=None, help="Audio capture device (e.g. meeting-agent-sink.monitor, @DEFAULT_SINK@.monitor)")
 @click.option("--keep-audio", is_flag=True, help="Keep WAV audio chunks after transcription (debug only)")
 @click.option("--chrome-profile", "-c", default=None, help="Path to a Chrome user-data-dir with a signed-in Google account (improves Google Meet reliability)")
-def join(url: str, name: str, title: str, mode: str, provider: str, model: str, device: str, keep_audio: bool, chrome_profile: str):
+@click.option("--chrome-channel", default=None, help="Browser channel: auto (default), chrome, chromium, or '' for Playwright bundled Chromium")
+def join(url: str, name: str, title: str, mode: str, provider: str, model: str, device: str, keep_audio: bool, chrome_profile: str, chrome_channel: str):
     """Join a meeting via browser automation and take notes.
 
     Supports Google Meet, Zoom, and Microsoft Teams.
@@ -86,6 +87,8 @@ def join(url: str, name: str, title: str, mode: str, provider: str, model: str, 
     _apply_settings(mode, provider, model, keep_audio, device)
     if chrome_profile:
         settings.chrome_user_data_dir = chrome_profile
+    if chrome_channel is not None:
+        settings.chrome_channel = chrome_channel
     try:
         agent = MeetingAgent()
         asyncio.run(agent.run(url, name, title=title))
@@ -269,6 +272,7 @@ def config(do_init: bool, show_path: bool, show_config: bool):
         click.echo(f"keep_audio:     {settings.keep_audio}")
         click.echo(f"bot_name:       {settings.bot_name}")
         click.echo(f"chrome_user_data_dir: {settings.chrome_user_data_dir or 'not set'}")
+        click.echo(f"chrome_channel: {settings.chrome_channel}")
         click.echo(f"virtual_display: {settings.virtual_display}")
         active = next((p for p in CONFIG_PATHS if p.is_file()), None)
         click.echo(f"\nConfig file:    {active or 'none'}")
@@ -324,6 +328,7 @@ _STARTER_CONFIG = """\
 # mode = "full"                  # full, transcript_only, summary_only
 # virtual_display = true         # auto-start Xvfb on headless Linux (requires pyvirtualdisplay)
 # chrome_user_data_dir = ""      # path to Chrome profile with signed-in Google account
+# chrome_channel = "auto"        # "auto" | "chrome" | "chromium" | "" (Playwright bundled)
 """
 
 

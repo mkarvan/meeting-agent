@@ -50,7 +50,10 @@ class MeetingAgent:
 
         # 2. Join meeting via browser
         self._browser_mode = True
-        await self.connector.start(user_data_dir=settings.chrome_user_data_dir)
+        await self.connector.start(
+            user_data_dir=settings.chrome_user_data_dir,
+            channel=settings.chrome_channel,
+        )
         await self.connector.join_meeting(meeting.platform.value, meeting_url, name)
 
         self._start_time = time.time()

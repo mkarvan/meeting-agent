@@ -3,34 +3,51 @@
 Detection-evasion strategy
 --------------------------
 Google Meet, Zoom, and Teams all run bot-detection JS that checks for:
-  - navigator.webdriver flag           → patched by playwright-stealth
-  - Chrome DevTools Protocol traces    → mitigated by headless=False
-  - Fake media device enumeration      → we do NOT pass --use-fake-device-for-media-stream;
-                                          real virtual audio devices are used instead
-                                          (PulseAudio null-sink on Linux, BlackHole on macOS)
-  - Missing persistent browser state   → use chrome_user_data_dir for Google sessions
 
-Cross-platform virtual display
--------------------------------
-- Linux headless (CI, Docker, SSH): Xvfb via VirtualDisplay so Chrome sees a real X server
-- macOS / Windows: native display session is always available; VirtualDisplay is a no-op
+  navigator.webdriver           → patched by playwright-stealth on the *context*
+                                  (covers all pages, not just the first one)
+  CDP Runtime.enable trace      → mitigated by headless=False + system Chrome
+  Playwright Chromium build     → the bundled Chromium has known build IDs / WebGL
+                                  renderer strings that Google fingerprints. Using
+                                  channel="chrome" (system-installed Google Chrome)
+                                  eliminates this entire vector.
+  UA string / version mismatch  → when using a named channel the browser's real UA
+                                  is left untouched; custom UA is only injected for
+                                  the bundled Playwright Chromium where it matters.
+  Fake media device enumeration → --use-fake-device-for-media-stream is NOT used;
+                                  real virtual audio devices (PulseAudio / BlackHole)
+                                  are used instead. --use-fake-ui-for-media-stream
+                                  silences the permission dialog without touching devices.
+  Missing persistent session    → chrome_user_data_dir lets the bot reuse a real
+                                  Google account session across runs.
 
-Zoom web client vs Meeting SDK
--------------------------------
-The Zoom Meeting SDK is a native C++/Objective-C SDK with no Python bindings. For Python,
-the correct approach is Zoom's web client (zoom.us/wc/join/MEETING_ID), which is Zoom's
-own browser-based joining path — identical to what human guests use. We rewrite standard
-/j/ join links to /wc/join/ to skip the "Open Zoom?" native-app redirect page.
+Chrome channel selection (chrome_channel config / --chrome-channel flag)
+------------------------------------------------------------------------
+  "auto"     → try system Chrome, then system Chromium, then Playwright bundled Chromium
+  "chrome"   → system Google Chrome required (falls back to bundled on failure)
+  "chromium" → system Chromium required (falls back to bundled on failure)
+  ""         → always use Playwright's bundled Chromium (no system Chrome needed)
+
+Linux headless
+--------------
+  Xvfb virtual display is started automatically when $DISPLAY is not set.
+  Requires: sudo apt-get install xvfb && pip install 'meeting-agent[linux]'
+
+Zoom web client
+---------------
+  The Zoom Meeting SDK is native C++/Obj-C with no Python bindings. The web
+  client (zoom.us/wc/join/ID) is Zoom's own browser-based path. Standard /j/
+  links are rewritten automatically.
 """
 import asyncio
 import logging
 import platform
 import re
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright_stealth import Stealth
 
 from src.errors import BrowserError, chromium_not_found
 from src.meeting.display import VirtualDisplay
@@ -39,6 +56,8 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM = platform.system()
 
+
+# ── URL helpers ───────────────────────────────────────────────────────────────
 
 def _zoom_web_client_url(url: str) -> str:
     """Rewrite a standard Zoom join URL to the web client path.
@@ -61,18 +80,44 @@ def _zoom_web_client_url(url: str) -> str:
     return url
 
 
+# ── Browser launch helpers ────────────────────────────────────────────────────
+
+def _resolve_channels(pref: str) -> list[str | None]:
+    """Return the ordered list of channels to try.
+
+    None in the list means "Playwright's bundled Chromium" (always last resort).
+
+      "auto"     → ["chrome", "chromium", None]
+      "chrome"   → ["chrome", None]
+      "chromium" → ["chromium", None]
+      ""         → [None]
+    """
+    pref = (pref or "").strip().lower()
+    if pref == "auto":
+        return ["chrome", "chromium", None]
+    if pref in ("chrome", "chromium", "msedge"):
+        return [pref, None]
+    return [None]
+
+
 def _build_launch_args() -> list[str]:
     """Return Chromium launch flags appropriate for the current OS."""
     args = [
         "--disable-blink-features=AutomationControlled",
         "--disable-features=IsolateOrigins,site-per-process",
-        # Auto-accept the browser's mic/camera permission dialog without faking
-        # the underlying devices.  Distinct from --use-fake-device-for-media-stream
-        # (which replaces hardware with synthetic streams and is detectable).
+        # Auto-accept mic/camera permission dialog without faking the underlying
+        # devices (distinct from --use-fake-device-for-media-stream).
         "--use-fake-ui-for-media-stream",
+        # Suppress first-run UX and default-browser prompts that can block the page.
+        "--no-first-run",
+        "--no-default-browser-check",
+        # Avoid keyring / secret-service dialogs on Linux desktop sessions.
+        "--password-store=basic",
+        # Set window size explicitly so viewport and window match.
+        "--window-size=1280,720",
     ]
     if _SYSTEM == "Linux":
-        # Required in containerised / low-resource environments
+        # Required in containerised / low-resource environments.
         args += [
             "--no-sandbox",
             "--disable-dev-shm-usage",
@@ -82,6 +127,7 @@ def _build_launch_args() -> list[str]:
 
 
 def _user_agent() -> str:
+    """Fallback UA used only when running Playwright's bundled Chromium."""
     ua_platform = (
         "Macintosh; Intel Mac OS X 10_15_7" if _SYSTEM == "Darwin"
         else "Windows NT 10.0; Win64; x64" if _SYSTEM == "Windows"
@@ -93,6 +139,67 @@ def _user_agent() -> str:
     )
 
 
+async def _launch_browser(playwright, args: list[str], channels: list[str | None]) -> tuple[Browser, str | None]:
+    """Try each channel in order; return (browser, channel_used).
+
+    Named channels (system Chrome / Chromium) are tried first. If none are
+    installed, falls back to Playwright's bundled Chromium (channel=None).
+    Failure of the bundled fallback is always fatal.
+    """
+    for ch in channels:
+        try:
+            browser = await playwright.chromium.launch(
+                headless=False,
+                args=args,
+                **({"channel": ch} if ch else {}),
+            )
+            logger.info(
+                "Browser launched: %s",
+                f"system Chrome (channel='{ch}')" if ch else "Playwright bundled Chromium",
+            )
+            return browser, ch
+        except Exception as e:
+            if ch is not None:
+                logger.debug("Channel '%s' unavailable — trying next (%s)", ch, e)
+            else:
+                raise BrowserError(f"Failed to launch browser: {e}") from e
+    raise BrowserError("No usable Chrome/Chromium browser found")
+
+
+async def _launch_persistent(
+    playwright,
+    user_data_dir: str,
+    args: list[str],
+    channels: list[str | None],
+) -> tuple[BrowserContext, str | None]:
+    """Try each channel for a persistent-context launch; return (context, channel_used)."""
+    for ch in channels:
+        try:
+            ctx = await playwright.chromium.launch_persistent_context(
+                user_data_dir,
+                headless=False,
+                args=args,
+                viewport={"width": 1280, "height": 720},
+                **({"channel": ch} if ch else {}),
+            )
+            logger.info(
+                "Persistent browser context launched: %s — profile: %s",
+                f"system Chrome (channel='{ch}')" if ch else "Playwright bundled Chromium",
+                user_data_dir,
+            )
+            return ctx, ch
+        except Exception as e:
+            if ch is not None:
+                logger.debug(
+                    "Channel '%s' unavailable for persistent context — trying next (%s)", ch, e
+                )
+            else:
+                raise BrowserError(f"Failed to launch persistent browser context: {e}") from e
+    raise BrowserError("No usable Chrome/Chromium browser found for persistent context")
+
+
+# ── Connector ─────────────────────────────────────────────────────────────────
+
 class MeetingConnector:
     """Connects to online meetings via browser automation."""
 
@@ -103,7 +210,7 @@ class MeetingConnector:
         self.page: Page | None = None
         self._vdisplay: VirtualDisplay | None = None
 
-    async def start(self, user_data_dir: str | None = None):
+    async def start(self, user_data_dir: str | None = None, channel: str = "auto"):
         """Launch browser with anti-detection measures.
 
         Parameters
@@ -112,60 +219,57 @@ class MeetingConnector:
             Path to a Chrome user data directory that already has a Google
             account signed in. When set, the browser reuses that session so
             Google Meet sees an authenticated user rather than a bot.
-            Create one by running Chrome once with:
+            Create one by running:
                 chromium --user-data-dir=/path/to/dir
-            and signing in to Google, then point this setting at that path.
-            Leave as None for anonymous / guest joining (works for Zoom/Teams;
-            may be limited on Google Meet).
+            Sign in to Google, close Chrome, then pass this path here.
+        channel:
+            Which browser binary to prefer. "auto" tries system Chrome, then
+            system Chromium, then falls back to Playwright's bundled Chromium.
+            Use "" to force the bundled Chromium (no system Chrome required).
         """
-        from playwright_stealth import Stealth
-
-        # Start virtual display before the browser (no-op on macOS/Windows)
+        # Start virtual display before the browser (no-op on macOS/Windows).
         self._vdisplay = VirtualDisplay()
         self._vdisplay.start()
 
         args = _build_launch_args()
-        ua = _user_agent()
+        channels = _resolve_channels(channel)
 
         try:
             self._playwright = await async_playwright().start()
 
             if user_data_dir:
-                # Persistent context — reuses cookies/session from an existing Chrome profile
-                self._context = await self._playwright.chromium.launch_persistent_context(
-                    user_data_dir,
-                    headless=False,
-                    args=args,
-                    user_agent=ua,
-                    viewport={"width": 1280, "height": 720},
+                self._context, ch_used = await _launch_persistent(
+                    self._playwright, user_data_dir, args, channels
                 )
                 self.browser = None
-                self.page = await self._context.new_page()
-                logger.info("Browser launched with persistent profile: %s", user_data_dir)
             else:
-                self.browser = await self._playwright.chromium.launch(
-                    headless=False,
-                    args=args,
+                self.browser, ch_used = await _launch_browser(
+                    self._playwright, args, channels
                 )
-                self._context = await self.browser.new_context(
-                    viewport={"width": 1280, "height": 720},
-                    user_agent=ua,
-                )
-                self.page = await self._context.new_page()
-                logger.info("Browser launched (anonymous session)")
+                ctx_kwargs: dict = {"viewport": {"width": 1280, "height": 720}}
+                if ch_used is None:
+                    # Bundled Playwright Chromium: override UA so it matches a real Chrome.
+                    # When using a named channel the browser reports its own real UA — we
+                    # must NOT override it or the version strings become inconsistent.
+                    ctx_kwargs["user_agent"] = _user_agent()
+                self._context = await self.browser.new_context(**ctx_kwargs)
 
-            # Pre-grant mic and camera so the Web Permission API reports "granted"
-            # before the page even loads.  Combined with --use-fake-ui-for-media-stream
-            # this ensures no permission dialog ever blocks the join flow.
+            # Apply stealth to the *context* so every page opened from it is patched —
+            # including any popup, iframe, or redirect page Google Meet may open.
+            await Stealth().apply_stealth_async(self._context)
+
+            # Pre-grant mic/camera via the Web Permission API before any page loads.
             await self._context.grant_permissions(["microphone", "camera"])
 
+            self.page = await self._context.new_page()
+
+        except BrowserError:
+            raise
         except Exception as e:
             err_msg = str(e).lower()
             if "executable doesn't exist" in err_msg or "browsertype.launch" in err_msg:
                 raise chromium_not_found() from e
             raise BrowserError(f"Failed to launch browser: {e}") from e
-
-        await Stealth().apply_stealth_async(self.page)
 
     # ── Platform join methods ────────────────────────────────────────────
 
@@ -179,14 +283,14 @@ class MeetingConnector:
         await self.page.goto(meeting_url, timeout=60000, wait_until="domcontentloaded")
         await asyncio.sleep(4)  # wait for SPA hydration and bot-detection JS to settle
 
-        # Pre-join: disable camera and microphone if buttons are present
+        # Pre-join: disable camera and microphone if buttons are present.
         for label in ("Turn off camera", "Turn off microphone"):
             try:
                 await self.page.click(f'button[aria-label="{label}"]', timeout=3000)
             except Exception:
                 pass
 
-        # Fill in guest name if the name input is shown (anonymous / pre-join screen)
+        # Fill in guest name if the name input is shown (anonymous / pre-join screen).
         name_selectors = [
             'input[aria-label="Your name"]',
             'input[placeholder*="name" i]',
@@ -201,7 +305,7 @@ class MeetingConnector:
             except Exception:
                 continue
 
-        # Click the join / ask-to-join button
+        # Click the join / ask-to-join button.
         join_selectors = [
             'button:has-text("Ask to join")',
             'button:has-text("Join now")',
@@ -238,7 +342,7 @@ class MeetingConnector:
         await self.page.goto(web_url, timeout=60000, wait_until="domcontentloaded")
         await asyncio.sleep(3)
 
-        # Name input — Zoom web client uses several selector variants
+        # Name input — Zoom web client uses several selector variants.
         name_selectors = [
             '#input-for-name',
             '#inputname',
@@ -253,7 +357,6 @@ class MeetingConnector:
             except Exception:
                 continue
 
-        # Join button
         join_selectors = [
             '#joinBtn',
             'button:has-text("Join")',
@@ -278,13 +381,12 @@ class MeetingConnector:
         await self.page.goto(meeting_url, timeout=60000, wait_until="domcontentloaded")
         await asyncio.sleep(3)
 
-        # Dismiss "Open the Teams app?" banner if present
+        # Dismiss "Open the Teams app?" banner if present.
         try:
             await self.page.click('button:has-text("Continue on this browser")', timeout=5000)
         except Exception:
             pass
 
-        # Guest name input
         name_selectors = [
             'input[placeholder="Type your name"]',
             'input[placeholder*="name" i]',
@@ -299,7 +401,6 @@ class MeetingConnector:
             except Exception:
                 continue
 
-        # Join button
         join_selectors = [
             'button:has-text("Join now")',
             'button:has-text("Join")',
@@ -322,7 +423,6 @@ class MeetingConnector:
         platform: str,
         url: str,
         bot_name: str = "Meeting Notes Bot",
-        user_data_dir: str | None = None,
     ):
         """Join a meeting on any supported platform."""
         join_methods = {
@@ -354,7 +454,6 @@ class MeetingConnector:
                     timeout=5000,
                 )
             except Exception:
-                # Selector gone → meeting has ended
                 break
             await asyncio.sleep(5)
 
@@ -384,7 +483,7 @@ class MeetingConnector:
             except Exception:
                 pass
         elif self._context:
-            # persistent context path — closing the context also closes the browser
+            # Persistent context path — closing the context also closes the browser.
             try:
                 await self._context.close()
             except Exception:

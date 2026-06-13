@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     # Browser automation
     chrome_user_data_dir: Optional[str] = None
     virtual_display: bool = True
+    # "auto" tries system Chrome → system Chromium → Playwright bundled Chromium.
+    # Set to "" to always use the bundled Playwright Chromium (no system Chrome needed).
+    chrome_channel: str = "auto"
 
     def get_llm_config(self) -> dict:
         """Resolve active LLM configuration based on provider."""

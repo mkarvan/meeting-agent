@@ -1,8 +1,12 @@
 """Tests for the meeting connector module with mocked Playwright."""
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock, call
 import pytest
 
-from src.meeting.connector import MeetingConnector, _zoom_web_client_url
+from src.meeting.connector import (
+    MeetingConnector,
+    _zoom_web_client_url,
+    _resolve_channels,
+)
 from src.errors import BrowserError
 
 
@@ -28,7 +32,67 @@ class TestMeetingConnector:
 
     @pytest.mark.asyncio
     async def test_start_launches_browser(self, connector):
-        """Start should launch Chromium and create a page via context."""
+        """Start should launch Chromium and create a page via context.
+
+        channel="" forces the bundled Playwright Chromium, bypassing the
+        channel-fallback logic so the test stays deterministic.
+        """
+        mock_page = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_instance = AsyncMock()
+        mock_ctx = AsyncMock()
+        mock_context = AsyncMock()
+
+        mock_ctx.start.return_value = mock_instance
+        mock_instance.chromium.launch.return_value = mock_browser
+        mock_browser.new_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+
+        mock_stealth_instance = AsyncMock()
+        with (
+            patch("src.meeting.connector.async_playwright", return_value=mock_ctx),
+            patch("src.meeting.display.VirtualDisplay.is_needed", return_value=False),
+            patch("src.meeting.connector.Stealth", return_value=mock_stealth_instance),
+        ):
+            await connector.start(channel="")  # bundled Chromium, no channel fallback
+
+        mock_ctx.start.assert_called_once()
+        mock_instance.chromium.launch.assert_called_once()
+        mock_browser.new_context.assert_called_once()
+        mock_context.new_page.assert_called_once()
+        # Stealth must be applied to the *context* (not just the page) so all
+        # pages opened from the context — including popups — are patched.
+        mock_stealth_instance.apply_stealth_async.assert_called_once_with(mock_context)
+
+    @pytest.mark.asyncio
+    async def test_start_uses_persistent_context_when_user_data_dir_set(self, connector):
+        """When user_data_dir is given, start should use launch_persistent_context."""
+        mock_page = AsyncMock()
+        mock_instance = AsyncMock()
+        mock_ctx = AsyncMock()
+        mock_context = AsyncMock()
+
+        mock_ctx.start.return_value = mock_instance
+        mock_instance.chromium.launch_persistent_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+
+        mock_stealth_instance = AsyncMock()
+        with (
+            patch("src.meeting.connector.async_playwright", return_value=mock_ctx),
+            patch("src.meeting.display.VirtualDisplay.is_needed", return_value=False),
+            patch("src.meeting.connector.Stealth", return_value=mock_stealth_instance),
+        ):
+            await connector.start(user_data_dir="/tmp/chrome-profile", channel="")
+
+        mock_instance.chromium.launch_persistent_context.assert_called_once()
+        assert connector.browser is None
+        assert connector._context is mock_context
+        # Stealth must be applied to the context (covers all pages from this context).
+        mock_stealth_instance.apply_stealth_async.assert_called_once_with(mock_context)
+
+    @pytest.mark.asyncio
+    async def test_start_tries_system_chrome_first(self, connector):
+        """With channel='auto', start should try system Chrome before bundled Chromium."""
         mock_page = AsyncMock()
         mock_browser = AsyncMock()
         mock_instance = AsyncMock()
@@ -43,35 +107,44 @@ class TestMeetingConnector:
         with (
             patch("src.meeting.connector.async_playwright", return_value=mock_ctx),
             patch("src.meeting.display.VirtualDisplay.is_needed", return_value=False),
+            patch("src.meeting.connector.Stealth", return_value=AsyncMock()),
         ):
-            await connector.start()
+            await connector.start(channel="auto")
 
-        mock_ctx.start.assert_called_once()
-        mock_instance.chromium.launch.assert_called_once()
-        mock_browser.new_context.assert_called_once()
-        mock_context.new_page.assert_called_once()
+        # First call should have been with channel="chrome"
+        first_call_kwargs = mock_instance.chromium.launch.call_args_list[0][1]
+        assert first_call_kwargs.get("channel") == "chrome"
 
     @pytest.mark.asyncio
-    async def test_start_uses_persistent_context_when_user_data_dir_set(self, connector):
-        """When user_data_dir is given, start should use launch_persistent_context."""
+    async def test_start_falls_back_to_bundled_when_system_chrome_missing(self, connector):
+        """When system Chrome is absent, start should fall back to bundled Chromium."""
         mock_page = AsyncMock()
+        mock_browser = AsyncMock()
         mock_instance = AsyncMock()
         mock_ctx = AsyncMock()
         mock_context = AsyncMock()
 
         mock_ctx.start.return_value = mock_instance
-        mock_instance.chromium.launch_persistent_context.return_value = mock_context
         mock_context.new_page.return_value = mock_page
+        mock_browser.new_context.return_value = mock_context
+
+        def launch_side_effect(*args, **kwargs):
+            if kwargs.get("channel") in ("chrome", "chromium"):
+                raise Exception("browser not found")
+            return mock_browser
+
+        mock_instance.chromium.launch.side_effect = launch_side_effect
 
         with (
             patch("src.meeting.connector.async_playwright", return_value=mock_ctx),
             patch("src.meeting.display.VirtualDisplay.is_needed", return_value=False),
+            patch("src.meeting.connector.Stealth", return_value=AsyncMock()),
         ):
-            await connector.start(user_data_dir="/tmp/chrome-profile")
+            await connector.start(channel="auto")
 
-        mock_instance.chromium.launch_persistent_context.assert_called_once()
-        assert connector.browser is None
-        assert connector._context is mock_context
+        assert connector.browser is mock_browser
+        # Should have been called 3 times: chrome (fail), chromium (fail), bundled (ok)
+        assert mock_instance.chromium.launch.call_count == 3
 
     @pytest.mark.asyncio
     async def test_join_google_meet_navigates(self, connected_connector):
@@ -154,6 +227,29 @@ class TestMeetingConnector:
         """wait_for_meeting_end should handle meeting ending."""
         connected_connector.page.wait_for_selector.side_effect = Exception("meeting ended")
         await connected_connector.wait_for_meeting_end(timeout_minutes=1)
+
+
+class TestResolveChannels:
+    """Unit tests for the channel resolution helper."""
+
+    def test_auto_returns_three_options(self):
+        assert _resolve_channels("auto") == ["chrome", "chromium", None]
+
+    def test_chrome_returns_chrome_then_bundled(self):
+        assert _resolve_channels("chrome") == ["chrome", None]
+
+    def test_chromium_returns_chromium_then_bundled(self):
+        assert _resolve_channels("chromium") == ["chromium", None]
+
+    def test_empty_string_returns_bundled_only(self):
+        assert _resolve_channels("") == [None]
+
+    def test_none_returns_bundled_only(self):
+        assert _resolve_channels(None) == [None]
+
+    def test_case_insensitive(self):
+        assert _resolve_channels("AUTO") == ["chrome", "chromium", None]
+        assert _resolve_channels("Chrome") == ["chrome", None]
 
 
 class TestZoomWebClientUrl:

@@ -66,6 +66,10 @@ def _build_launch_args() -> list[str]:
     args = [
         "--disable-blink-features=AutomationControlled",
         "--disable-features=IsolateOrigins,site-per-process",
+        # Auto-accept the browser's mic/camera permission dialog without faking
+        # the underlying devices.  Distinct from --use-fake-device-for-media-stream
+        # (which replaces hardware with synthetic streams and is detectable).
+        "--use-fake-ui-for-media-stream",
     ]
     if _SYSTEM == "Linux":
         # Required in containerised / low-resource environments
@@ -149,6 +153,11 @@ class MeetingConnector:
                 )
                 self.page = await self._context.new_page()
                 logger.info("Browser launched (anonymous session)")
+
+            # Pre-grant mic and camera so the Web Permission API reports "granted"
+            # before the page even loads.  Combined with --use-fake-ui-for-media-stream
+            # this ensures no permission dialog ever blocks the join flow.
+            await self._context.grant_permissions(["microphone", "camera"])
 
         except Exception as e:
             err_msg = str(e).lower()

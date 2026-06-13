@@ -11,7 +11,7 @@ An AI agent that joins online meetings, transcribes audio in real-time, and prod
 - **Three run modes** — full (summary + transcript), transcript_only (free, no LLM), summary_only (no transcript saved)
 - **Privacy-first** — WAV audio chunks deleted immediately after transcription; only text is retained
 - **Configurable** — CLI flags, environment variables, or TOML config file for every setting
-- **Cross-platform** — Linux (PulseAudio) and macOS (BlackHole/AVFoundation)
+- **Cross-platform** — Linux (PulseAudio + Xvfb), macOS (BlackHole/AVFoundation), Windows
 
 ## Use Cases
 
@@ -41,7 +41,7 @@ Audio -> PulseAudio/AVFoundation -> FFmpeg (30s WAV chunks)
 
 ## Requirements
 
-- **OS:** Linux with PulseAudio (tested on Linux Mint 22.3 / Ubuntu 24.04) or macOS 12+ with BlackHole
+- **OS:** Linux (PulseAudio), macOS 12+ (BlackHole), or Windows
 - **Python:** 3.11+
 - **Disk:** ~4 GB for the Whisper model (downloaded on first run)
 - **Memory:** 4 GB+ recommended (Whisper large-v3-turbo)
@@ -65,6 +65,22 @@ uv run python -c "from faster_whisper import WhisperModel; WhisperModel('large-v
 ```
 
 > **Note:** The Whisper model (~3.3 GB) is downloaded from Hugging Face on first use and cached in `~/.cache/huggingface/`. Set `HF_TOKEN` for faster downloads if you have rate-limiting issues.
+
+### Linux headless (CI / Docker / SSH servers)
+
+If you run on a Linux server with no display (no `$DISPLAY`), the browser needs Xvfb to avoid automation fingerprints. Install the extra:
+
+```bash
+# System package
+sudo apt-get install xvfb
+
+# Python package
+pip install 'meeting-agent[linux]'
+# or with uv:
+uv add pyvirtualdisplay
+```
+
+Xvfb is started automatically when `$DISPLAY` is not set. On macOS and Windows, or on a Linux desktop, it is never used.
 
 ## Setup
 
@@ -133,7 +149,7 @@ export ANTHROPIC_API_KEY="***"
 
 ## Usage
 
-### Listen Mode (recommended)
+### Listen Mode (recommended for Google Meet)
 
 Capture audio from a meeting you join yourself. Works with any meeting platform since it captures system audio directly:
 
@@ -150,17 +166,63 @@ uv run meeting-agent listen --title "Standup" --mode summary_only --provider ope
 
 ### Join Mode (browser automation)
 
-Automatically join a meeting via browser and take notes:
+Automatically join a meeting via browser and take notes. The browser launches in headed mode with stealth patches applied. On Linux headless servers, Xvfb is started automatically.
 
 ```bash
-# Full mode — join, transcribe, and generate notes
-uv run meeting-agent join "https://meet.google.com/abc-defg-hij"
+# Zoom — standard /j/ URL is rewritten to the web client automatically
+uv run meeting-agent join "https://zoom.us/j/123456789?pwd=abc"
 
-# Custom bot name and meeting title
-uv run meeting-agent join "https://zoom.us/j/123456789" --name "Notes Bot" --title "Sprint Planning"
+# Microsoft Teams — anonymous guest join works without a Microsoft account
+uv run meeting-agent join "https://teams.microsoft.com/l/meetup-join/..."
+
+# Custom bot name and title
+uv run meeting-agent join "https://zoom.us/j/123456789" --name "Notes Bot" --title "Sprint Review"
+
+# Google Meet — works best with a pre-authenticated Chrome profile (see below)
+uv run meeting-agent join "https://meet.google.com/abc-defg-hij" --chrome-profile ~/.meeting-agent-chrome
 ```
 
-> **Note:** Google Meet actively blocks automated browsers. For Google Meet, use `listen` mode and join the meeting manually in your browser.
+#### Google Meet and `--chrome-profile`
+
+Google Meet requires a signed-in Google account for reliable joining — anonymous guest access is increasingly restricted. The `--chrome-profile` flag points to a Chrome user data directory that already has a Google account authenticated:
+
+```bash
+# Step 1: create the profile directory and sign in to Google (one-time setup)
+chromium --user-data-dir=~/.meeting-agent-chrome
+# → sign in to your Google account, then close Chrome
+
+# Step 2: use the profile for all subsequent joins
+uv run meeting-agent join "https://meet.google.com/abc-defg-hij" \
+  --chrome-profile ~/.meeting-agent-chrome \
+  --name "Meeting Notes Bot"
+```
+
+You can also set it permanently in the config file:
+
+```toml
+[meeting]
+chrome_user_data_dir = "/home/you/.meeting-agent-chrome"
+```
+
+If you prefer not to set up a Chrome profile, use `listen` mode and join Google Meet manually — it captures audio from any meeting regardless of how you joined.
+
+#### How bot detection is avoided
+
+| Signal | Mitigation |
+|--------|-----------|
+| `navigator.webdriver` | Patched by playwright-stealth |
+| CDP connection traces | `headless=False` — browser runs in a real window |
+| Fake media devices | Real virtual audio devices used (no `--use-fake-device-for-media-stream`) |
+| No X display (Linux) | Xvfb virtual display via pyvirtualdisplay |
+| No persistent session | `--chrome-profile` reuses real browser cookies |
+
+#### Zoom web client
+
+The Zoom Meeting SDK is a native C++ library with no Python bindings. The correct approach for Python is Zoom's web client (`zoom.us/wc/join/MEETING_ID`), which is Zoom's own browser-based joining path — identical to what human guests use. The agent automatically rewrites standard `/j/` links to the web client URL to skip the "Open Zoom?" native-app interstitial, preserving any password parameters.
+
+```
+https://zoom.us/j/123456789?pwd=abc  →  https://zoom.us/wc/join/123456789?pwd=abc
+```
 
 ### Run Modes
 
@@ -206,8 +268,9 @@ uv run meeting-agent status
 # Keep WAV audio files after transcription (for debugging)
 uv run meeting-agent listen --title "Debug" --keep-audio
 
-# Enable verbose debug logging
-uv run meeting-agent --log-level DEBUG listen --title "Debug" --keep-audio
+# Verbose logging
+uv run meeting-agent --log-level DEBUG listen --title "Debug"
+uv run meeting-agent --log-level DEBUG join "https://zoom.us/j/123"
 ```
 
 ### Output
@@ -291,6 +354,8 @@ temperature = 0.3
 [meeting]
 bot_name = "Meeting Notes Bot"
 mode = "full"
+# chrome_user_data_dir = "/home/you/.meeting-agent-chrome"  # for Google Meet
+# virtual_display = true   # auto (Xvfb on headless Linux, no-op elsewhere)
 ```
 
 ### Environment Variables
@@ -309,6 +374,8 @@ All settings can also be set via environment variables (prefixed with `MEETING_A
 | `MEETING_AGENT_BOT_NAME` | `Meeting Notes Bot` | Display name in meetings |
 | `MEETING_AGENT_WHISPER_MODEL` | `large-v3-turbo` | Whisper model variant |
 | `MEETING_AGENT_CHUNK_DURATION` | `30` | Audio chunk duration in seconds |
+| `MEETING_AGENT_CHROME_USER_DATA_DIR` | _(unset)_ | Chrome profile with signed-in Google account |
+| `MEETING_AGENT_VIRTUAL_DISPLAY` | `true` | Auto-start Xvfb on headless Linux |
 
 ## Privacy & Data Retention
 
@@ -316,13 +383,32 @@ All settings can also be set via environment variables (prefixed with `MEETING_A
 - **Text:** Transcript and notes saved to `notes/` directory. Delete manually when no longer needed.
 - **LLM:** Only transcribed text (never audio) is sent to the LLM provider. Provider data policies apply.
 - **Local mode:** Use `--mode transcript_only` to keep everything on your machine with zero API calls.
+- **Chrome profile:** If using `--chrome-profile`, the profile directory contains Google account cookies. Store it in a private location and do not share it.
+
+## Platform Support
+
+| Platform | Join mode | Listen mode | Notes |
+|----------|-----------|-------------|-------|
+| **Google Meet** | ✓ (with `--chrome-profile`) | ✓ (recommended) | Requires pre-authenticated Chrome profile for reliable auto-join |
+| **Zoom** | ✓ | ✓ | Uses Zoom web client (`/wc/join/`); no Zoom account required |
+| **Microsoft Teams** | ✓ | ✓ | Anonymous guest join; most permissive of the three |
+| **Webex** | — | ✓ | Auto-join not yet supported |
+
+### Virtual Display (Linux)
+
+| Environment | `$DISPLAY` | Behavior |
+|-------------|------------|---------|
+| Linux desktop | set | `headless=False`, no Xvfb needed |
+| Linux CI / Docker / SSH | not set | Xvfb started automatically via pyvirtualdisplay |
+| macOS | n/a | Native display session, no Xvfb |
+| Windows | n/a | Native display session, no Xvfb |
 
 ## Limitations
 
-- **Platform UI changes** — Google Meet, Zoom, and Teams change their DOM frequently. Join flows may need updates.
-- **Google Meet bot detection** — Google Meet actively blocks automated browsers. Use `listen` mode instead.
+- **Platform UI changes** — Google Meet, Zoom, and Teams change their DOM frequently. Join flows may need selector updates.
+- **Google Meet without a profile** — Without `--chrome-profile`, Meet may limit guests or block the join entirely depending on the meeting's settings.
 - **macOS audio routing** — On macOS, you need BlackHole + Multi-Output Device to capture system audio while hearing it. Use `scripts/setup-audio-macos.sh`.
-- **Linux audio routing** — On Linux, you must route browser audio into the virtual sink (use `pavucontrol`), or use `--device @DEFAULT_SINK@.monitor` to capture directly from speakers/headphones.
+- **Linux audio routing** — On Linux, you must route browser audio into the virtual sink (use `pavucontrol`), or use `--device @DEFAULT_SINK@.monitor` to capture from speakers/headphones.
 - **Anthropic provider** — Requires an OpenAI-compatible proxy (e.g. [LiteLLM](https://github.com/BerriAI/litellm)) to translate the Anthropic Messages API into the OpenAI chat completions format the agent uses. Alternatively, use `--provider custom` with the proxy's base URL.
 - **Speaker diarization** — Does not identify "who said what" (planned for v0.2).
 - **No calendar integration** — Meeting URLs must be provided manually (calendar integration planned).

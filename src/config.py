@@ -107,6 +107,10 @@ class Settings(BaseSettings):
     join_muted: bool = True
     join_video_off: bool = True
 
+    # Browser automation
+    chrome_user_data_dir: Optional[str] = None
+    virtual_display: bool = True
+
     def get_llm_config(self) -> dict:
         """Resolve active LLM configuration based on provider."""
         if self.llm_provider == LLMProvider.OPENAI:

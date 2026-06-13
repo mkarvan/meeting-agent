@@ -17,6 +17,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Linux headless: Xvfb virtual display (also requires system package: xvfb)
+#   sudo apt-get install xvfb
+#   pip install 'meeting-agent[linux]'
+linux = [
+    "pyvirtualdisplay>=3.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",

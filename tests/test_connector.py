@@ -2,7 +2,7 @@
 from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 
-from src.meeting.connector import MeetingConnector
+from src.meeting.connector import MeetingConnector, _zoom_web_client_url
 from src.errors import BrowserError
 
 
@@ -40,13 +40,38 @@ class TestMeetingConnector:
         mock_browser.new_context.return_value = mock_context
         mock_context.new_page.return_value = mock_page
 
-        with patch("src.meeting.connector.async_playwright", return_value=mock_ctx):
+        with (
+            patch("src.meeting.connector.async_playwright", return_value=mock_ctx),
+            patch("src.meeting.display.VirtualDisplay.is_needed", return_value=False),
+        ):
             await connector.start()
 
         mock_ctx.start.assert_called_once()
         mock_instance.chromium.launch.assert_called_once()
         mock_browser.new_context.assert_called_once()
         mock_context.new_page.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_uses_persistent_context_when_user_data_dir_set(self, connector):
+        """When user_data_dir is given, start should use launch_persistent_context."""
+        mock_page = AsyncMock()
+        mock_instance = AsyncMock()
+        mock_ctx = AsyncMock()
+        mock_context = AsyncMock()
+
+        mock_ctx.start.return_value = mock_instance
+        mock_instance.chromium.launch_persistent_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+
+        with (
+            patch("src.meeting.connector.async_playwright", return_value=mock_ctx),
+            patch("src.meeting.display.VirtualDisplay.is_needed", return_value=False),
+        ):
+            await connector.start(user_data_dir="/tmp/chrome-profile")
+
+        mock_instance.chromium.launch_persistent_context.assert_called_once()
+        assert connector.browser is None
+        assert connector._context is mock_context
 
     @pytest.mark.asyncio
     async def test_join_google_meet_navigates(self, connected_connector):
@@ -61,11 +86,19 @@ class TestMeetingConnector:
 
     @pytest.mark.asyncio
     async def test_join_zoom_navigates(self, connected_connector):
-        """join_zoom should navigate to Zoom web client."""
+        """join_zoom should rewrite /j/ URLs to the web client path."""
         await connected_connector.join_zoom("https://zoom.us/j/123456789")
 
         call_args = connected_connector.page.goto.call_args
-        assert call_args[0][0] == "https://zoom.us/j/123456789"
+        assert call_args[0][0] == "https://zoom.us/wc/join/123456789"
+
+    @pytest.mark.asyncio
+    async def test_join_zoom_preserves_web_client_url(self, connected_connector):
+        """join_zoom should not rewrite a URL that is already a web client URL."""
+        await connected_connector.join_zoom("https://zoom.us/wc/join/99887766")
+
+        call_args = connected_connector.page.goto.call_args
+        assert call_args[0][0] == "https://zoom.us/wc/join/99887766"
 
     @pytest.mark.asyncio
     async def test_join_teams_navigates(self, connected_connector):
@@ -121,3 +154,27 @@ class TestMeetingConnector:
         """wait_for_meeting_end should handle meeting ending."""
         connected_connector.page.wait_for_selector.side_effect = Exception("meeting ended")
         await connected_connector.wait_for_meeting_end(timeout_minutes=1)
+
+
+class TestZoomWebClientUrl:
+    """Unit tests for the Zoom URL rewrite helper."""
+
+    def test_rewrites_standard_join_url(self):
+        result = _zoom_web_client_url("https://zoom.us/j/123456789")
+        assert result == "https://zoom.us/wc/join/123456789"
+
+    def test_preserves_password_query_param(self):
+        result = _zoom_web_client_url("https://zoom.us/j/123456789?pwd=abc123")
+        assert result == "https://zoom.us/wc/join/123456789?pwd=abc123"
+
+    def test_preserves_already_web_client_url(self):
+        url = "https://zoom.us/wc/join/99887766"
+        assert _zoom_web_client_url(url) == url
+
+    def test_returns_non_zoom_url_unchanged(self):
+        url = "https://meet.google.com/abc-defg-hij"
+        assert _zoom_web_client_url(url) == url
+
+    def test_returns_url_without_meeting_id_unchanged(self):
+        url = "https://zoom.us/profile"
+        assert _zoom_web_client_url(url) == url

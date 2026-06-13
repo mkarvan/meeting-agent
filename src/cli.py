@@ -69,11 +69,23 @@ def cli(log_level: str):
 @click.option("--model", type=str, default=None, help="LLM model name (e.g. gpt-4o, claude-sonnet-4-20250514)")
 @click.option("--device", "-d", type=str, default=None, help="Audio capture device (e.g. meeting-agent-sink.monitor, @DEFAULT_SINK@.monitor)")
 @click.option("--keep-audio", is_flag=True, help="Keep WAV audio chunks after transcription (debug only)")
-def join(url: str, name: str, title: str, mode: str, provider: str, model: str, device: str, keep_audio: bool):
+@click.option("--chrome-profile", "-c", default=None, help="Path to a Chrome user-data-dir with a signed-in Google account (improves Google Meet reliability)")
+def join(url: str, name: str, title: str, mode: str, provider: str, model: str, device: str, keep_audio: bool, chrome_profile: str):
     """Join a meeting via browser automation and take notes.
-    NOTE: Google Meet actively blocks automated browsers.
-    For Google Meet, use the 'listen' command instead and join manually."""
+
+    Supports Google Meet, Zoom, and Microsoft Teams.
+
+    Google Meet tip: for best results, pass --chrome-profile pointing to a
+    Chrome user-data-dir that already has a Google account signed in.
+    Create one by running:  chromium --user-data-dir=~/.meeting-agent-chrome
+    Sign in to Google, close Chrome, then pass that path here.
+
+    Linux headless: Xvfb is started automatically if no $DISPLAY is set.
+    Install the required package first:  pip install 'meeting-agent[linux]'
+    """
     _apply_settings(mode, provider, model, keep_audio, device)
+    if chrome_profile:
+        settings.chrome_user_data_dir = chrome_profile
     try:
         agent = MeetingAgent()
         asyncio.run(agent.run(url, name, title=title))
@@ -256,6 +268,8 @@ def config(do_init: bool, show_path: bool, show_config: bool):
         click.echo(f"notes_dir:      {settings.notes_dir}")
         click.echo(f"keep_audio:     {settings.keep_audio}")
         click.echo(f"bot_name:       {settings.bot_name}")
+        click.echo(f"chrome_user_data_dir: {settings.chrome_user_data_dir or 'not set'}")
+        click.echo(f"virtual_display: {settings.virtual_display}")
         active = next((p for p in CONFIG_PATHS if p.is_file()), None)
         click.echo(f"\nConfig file:    {active or 'none'}")
         return
@@ -308,6 +322,8 @@ _STARTER_CONFIG = """\
 [meeting]
 # bot_name = "Meeting Notes Bot"
 # mode = "full"                  # full, transcript_only, summary_only
+# virtual_display = true         # auto-start Xvfb on headless Linux (requires pyvirtualdisplay)
+# chrome_user_data_dir = ""      # path to Chrome profile with signed-in Google account
 """
 
 
